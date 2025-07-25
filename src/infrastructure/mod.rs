@@ -7,11 +7,11 @@ pub type RepoResult<T> = Result<T, Error>;
 
 // Infrastructure layer: database, external services, adapters
 pub mod user_repository;
+pub use user_repository::InMemoryRefreshTokenRepository;
 pub use user_repository::InMemoryUserRepository;
 pub use user_repository::PostgresRefreshTokenRepository;
 pub use user_repository::PostgresUserRepository;
 pub use user_repository::RefreshTokenRepository;
-pub use user_repository::InMemoryRefreshTokenRepository;
 
 #[async_trait]
 pub trait UserRepository: Send + Sync {

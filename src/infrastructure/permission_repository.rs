@@ -92,7 +92,7 @@ impl PermissionRepository for PostgresPermissionRepository {
     }
     #[instrument]
     async fn role_has_permission(&self, role_id: &str, permission_id: &str) -> RepoResult<bool> {
-        let found: Option<i64> = sqlx::query_scalar(
+        let found: Option<i32> = sqlx::query_scalar(
             "SELECT 1 FROM role_permissions WHERE role_id = $1 AND permission_id = $2",
         )
         .bind(role_id)

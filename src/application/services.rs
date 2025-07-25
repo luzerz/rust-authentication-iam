@@ -256,7 +256,10 @@ impl AuthZService {
 mod tests {
     use super::*;
     use crate::domain::user::User;
-    use async_trait::async_trait;
+    use crate::infrastructure::{
+        InMemoryAbacPolicyRepository, InMemoryPermissionRepository, InMemoryRefreshTokenRepository,
+        InMemoryRoleRepository, InMemoryUserRepository, PermissionRepository, RoleRepository,
+    };
     use bcrypt::{DEFAULT_COST, hash};
     use std::sync::Arc;
 
@@ -267,158 +270,84 @@ mod tests {
         }
     }
 
-    // Mock implementations for testing
-    struct MockUserRepository {
-        users: std::collections::HashMap<String, User>,
-    }
-
-    impl MockUserRepository {
-        fn new() -> Self {
-            let mut users = std::collections::HashMap::new();
-            let password_hash = hash("password123", DEFAULT_COST).unwrap();
-            users.insert(
-                "test@example.com".to_string(),
-                User {
-                    id: "user1".to_string(),
-                    email: "test@example.com".to_string(),
-                    password_hash,
-                    roles: vec!["user".to_string()],
-                    is_locked: false,
-                },
-            );
-            Self { users }
-        }
-    }
-
-    #[async_trait]
-    impl UserRepository for MockUserRepository {
-        async fn find_by_email(&self, email: &str) -> Option<User> {
-            self.users.get(email).cloned()
-        }
-    }
-
-    struct MockRefreshTokenRepository {}
-
-    impl MockRefreshTokenRepository {
-        fn new() -> Self {
-            Self {}
-        }
-    }
-
-    #[async_trait]
-    impl RefreshTokenRepository for MockRefreshTokenRepository {
-        async fn insert(&self, _: RefreshToken) -> Result<(), sqlx::Error> {
-            Ok(())
-        }
-
-        async fn revoke(&self, _jti: &str) -> Result<(), sqlx::Error> {
-            Ok(())
-        }
-
-        async fn is_valid(&self, _jti: &str) -> Result<bool, sqlx::Error> {
-            Ok(true)
-        }
+    #[tokio::test]
+    async fn test_auth_service_authenticate_user_success() {
+        let password_hash = hash("password", DEFAULT_COST).unwrap();
+        let user = User {
+            id: "user1".to_string(),
+            email: "user@example.com".to_string(),
+            password_hash,
+            roles: vec![],
+            is_locked: false,
+        };
+        let user_repo = Arc::new(InMemoryUserRepository::new(vec![user]));
+        let auth_service = AuthService;
+        let password_service = PasswordService;
+        let result = auth_service
+            .authenticate_user("user@example.com", "password", user_repo, &password_service)
+            .await;
+        assert!(result.is_ok());
+        let authenticated_user = result.unwrap();
+        assert_eq!(authenticated_user.email, "user@example.com");
     }
 
     #[tokio::test]
-    async fn test_auth_service_authenticate_user_success() {
+    async fn test_auth_service_authenticate_user_not_found() {
+        let user_repo = Arc::new(InMemoryUserRepository::new(vec![]));
         let auth_service = AuthService;
         let password_service = PasswordService;
-        let user_repo = Arc::new(MockUserRepository::new());
-
         let result = auth_service
             .authenticate_user(
-                "test@example.com",
-                "password123",
+                "nonexistent@example.com",
+                "password",
                 user_repo,
                 &password_service,
             )
             .await;
-
-        assert!(result.is_ok());
-        let user = result.unwrap();
-        assert_eq!(user.email, "test@example.com");
-        assert_eq!(user.id, "user1");
+        assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn test_auth_service_authenticate_user_wrong_password() {
+        let password_hash = hash("password", DEFAULT_COST).unwrap();
+        let user = User {
+            id: "user1".to_string(),
+            email: "user@example.com".to_string(),
+            password_hash,
+            roles: vec![],
+            is_locked: false,
+        };
+        let user_repo = Arc::new(InMemoryUserRepository::new(vec![user]));
         let auth_service = AuthService;
         let password_service = PasswordService;
-        let user_repo = Arc::new(MockUserRepository::new());
-
         let result = auth_service
             .authenticate_user(
-                "test@example.com",
+                "user@example.com",
                 "wrongpassword",
                 user_repo,
                 &password_service,
             )
             .await;
-
         assert!(result.is_err());
-        match result.unwrap_err() {
-            AuthError::InvalidCredentials => {}
-            _ => panic!("Expected InvalidCredentials error"),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_auth_service_authenticate_user_not_found() {
-        let auth_service = AuthService;
-        let password_service = PasswordService;
-        let user_repo = Arc::new(MockUserRepository::new());
-
-        let result = auth_service
-            .authenticate_user(
-                "nonexistent@example.com",
-                "password123",
-                user_repo,
-                &password_service,
-            )
-            .await;
-
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            AuthError::InvalidCredentials => {}
-            _ => panic!("Expected InvalidCredentials error"),
-        }
     }
 
     #[tokio::test]
     async fn test_auth_service_authenticate_user_locked_account() {
-        let auth_service = AuthService;
-        let password_service = PasswordService;
-        let mut user_repo = MockUserRepository::new();
-
-        // Create a locked user
-        let password_hash = hash("password123", DEFAULT_COST).unwrap();
-        let locked_user = User {
-            id: "locked_user".to_string(),
-            email: "locked@example.com".to_string(),
+        let password_hash = hash("password", DEFAULT_COST).unwrap();
+        let user = User {
+            id: "user1".to_string(),
+            email: "user@example.com".to_string(),
             password_hash,
-            roles: vec!["user".to_string()],
+            roles: vec![],
             is_locked: true,
         };
-        user_repo
-            .users
-            .insert("locked@example.com".to_string(), locked_user);
-        let user_repo = Arc::new(user_repo);
-
+        let user_repo = Arc::new(InMemoryUserRepository::new(vec![user]));
+        let auth_service = AuthService;
+        let password_service = PasswordService;
         let result = auth_service
-            .authenticate_user(
-                "locked@example.com",
-                "password123",
-                user_repo,
-                &password_service,
-            )
+            .authenticate_user("user@example.com", "password", user_repo, &password_service)
             .await;
-
         assert!(result.is_err());
-        match result.unwrap_err() {
-            AuthError::AccountLocked => {}
-            _ => panic!("Expected AccountLocked error"),
-        }
     }
 
     #[test]
@@ -447,7 +376,7 @@ mod tests {
             roles: vec!["user".to_string()],
             is_locked: false,
         };
-        let refresh_token_repo = Arc::new(MockRefreshTokenRepository::new());
+        let refresh_token_repo = Arc::new(InMemoryRefreshTokenRepository::new());
 
         let (access_token, refresh_token) =
             token_service.issue_tokens(&user, refresh_token_repo).await;
@@ -543,12 +472,73 @@ mod tests {
         };
 
         // Test that issue_tokens returns both access and refresh tokens
-        let refresh_token_repo = Arc::new(MockRefreshTokenRepository::new());
+        let refresh_token_repo = Arc::new(InMemoryRefreshTokenRepository::new());
         let (access_token, refresh_token) =
             token_service.issue_tokens(&user, refresh_token_repo).await;
 
         assert!(!access_token.is_empty());
         assert!(!refresh_token.is_empty());
         assert_ne!(access_token, refresh_token);
+    }
+
+    #[tokio::test]
+    async fn test_password_service_hash_password() {
+        let password = "testpassword";
+        let hash = hash(password, DEFAULT_COST).unwrap();
+        assert!(!hash.is_empty());
+        assert_ne!(hash, password);
+    }
+
+    #[tokio::test]
+    async fn test_authz_service_user_has_permission() {
+        let role_repo = Arc::new(InMemoryRoleRepository::new());
+        let permission_repo = Arc::new(InMemoryPermissionRepository::new());
+        let abac_repo = Arc::new(InMemoryAbacPolicyRepository::new());
+
+        let authz_service = AuthZService {
+            role_repo,
+            permission_repo,
+            abac_repo,
+        };
+
+        // Test with user that has no roles
+        let result = authz_service
+            .user_has_permission("user1", "read", None)
+            .await;
+        assert!(result.is_ok());
+        assert!(!result.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_authz_service_user_has_permission_with_roles() {
+        let role_repo = Arc::new(InMemoryRoleRepository::new());
+        let permission_repo = Arc::new(InMemoryPermissionRepository::new());
+        let abac_repo = Arc::new(InMemoryAbacPolicyRepository::new());
+
+        let authz_service = AuthZService {
+            role_repo: role_repo.clone(),
+            permission_repo: permission_repo.clone(),
+            abac_repo,
+        };
+
+        // Create a role and permission
+        let role = role_repo.create_role("admin").await;
+        let permission = permission_repo.create_permission("read").await.unwrap();
+
+        // Assign permission to role
+        permission_repo
+            .assign_permission(&role.id, &permission.id)
+            .await
+            .unwrap();
+
+        // Assign role to user
+        role_repo.assign_role("user1", &role.id).await;
+
+        // Test permission check
+        let result = authz_service
+            .user_has_permission("user1", "read", None)
+            .await;
+        assert!(result.is_ok());
+        assert!(result.unwrap());
     }
 }

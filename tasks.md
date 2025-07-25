@@ -17,9 +17,9 @@
 - [x] Global JWT authentication middleware (all routes except /iam/login)
 - [x] Per-route RBAC/ABAC checks via extractor and AuthZService
 - [x] Full integration and E2E test coverage for all endpoints
+- [x] Endpoint versioning (if required)
 
 ## In Progress / Remaining
-- [ ] Endpoint versioning (if required)
 - [ ] RBAC: Role hierarchies (role inheritance)
 - [ ] RBAC: Permission groups and metadata
 - [ ] RBAC: User-role assignment/listing endpoints
