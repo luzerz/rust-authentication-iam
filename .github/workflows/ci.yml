@@ -192,7 +192,9 @@ jobs:
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v3
         with:
-          files: ./tarpaulin-report.xml
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./cobertura.xml
+          verbose: true
         continue-on-error: true
 
   # SonarCloud analysis
