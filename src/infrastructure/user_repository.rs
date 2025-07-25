@@ -154,6 +154,11 @@ impl InMemoryRefreshTokenRepository {
         }
     }
 }
+impl Default for InMemoryRefreshTokenRepository {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[async_trait]
 impl RefreshTokenRepository for InMemoryRefreshTokenRepository {
