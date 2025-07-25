@@ -71,7 +71,17 @@ jobs:
             sleep 2
           done
       - name: Run migrations
-        run: sqlx migrate run --database-url $DATABASE_URL
+        run: |
+          echo "Running database migrations..."
+          sqlx migrate run --database-url $DATABASE_URL
+          echo "Migrations completed successfully"
+      - name: Verify database setup
+        run: |
+          echo "Verifying database setup..."
+          psql $DATABASE_URL -c "\dt" || echo "Failed to list tables"
+          psql $DATABASE_URL -c "SELECT COUNT(*) FROM users;" || echo "Failed to query users"
+          psql $DATABASE_URL -c "SELECT COUNT(*) FROM roles;" || echo "Failed to query roles"
+          psql $DATABASE_URL -c "SELECT COUNT(*) FROM permissions;" || echo "Failed to query permissions"
       - name: Run tests
         run: cargo test --all --release -- --nocapture
 
@@ -115,7 +125,17 @@ jobs:
             sleep 2
           done
       - name: Run migrations
-        run: sqlx migrate run --database-url $DATABASE_URL
+        run: |
+          echo "Running database migrations..."
+          sqlx migrate run --database-url $DATABASE_URL
+          echo "Migrations completed successfully"
+      - name: Verify database setup
+        run: |
+          echo "Verifying database setup..."
+          psql $DATABASE_URL -c "\dt" || echo "Failed to list tables"
+          psql $DATABASE_URL -c "SELECT COUNT(*) FROM users;" || echo "Failed to query users"
+          psql $DATABASE_URL -c "SELECT COUNT(*) FROM roles;" || echo "Failed to query roles"
+          psql $DATABASE_URL -c "SELECT COUNT(*) FROM permissions;" || echo "Failed to query permissions"
       - name: Run tests with database
         run: cargo test --all --release -- --nocapture
 
@@ -204,7 +224,17 @@ jobs:
             sleep 2
           done
       - name: Run migrations
-        run: sqlx migrate run --database-url $DATABASE_URL
+        run: |
+          echo "Running database migrations..."
+          sqlx migrate run --database-url $DATABASE_URL
+          echo "Migrations completed successfully"
+      - name: Verify database setup
+        run: |
+          echo "Verifying database setup..."
+          psql $DATABASE_URL -c "\dt" || echo "Failed to list tables"
+          psql $DATABASE_URL -c "SELECT COUNT(*) FROM users;" || echo "Failed to query users"
+          psql $DATABASE_URL -c "SELECT COUNT(*) FROM roles;" || echo "Failed to query roles"
+          psql $DATABASE_URL -c "SELECT COUNT(*) FROM permissions;" || echo "Failed to query permissions"
       - name: Run code coverage with database
         run: cargo tarpaulin --out Xml --all --release --fail-under 60
       - name: Upload coverage to Codecov
@@ -258,7 +288,17 @@ jobs:
             sleep 2
           done
       - name: Run migrations
-        run: sqlx migrate run --database-url $DATABASE_URL
+        run: |
+          echo "Running database migrations..."
+          sqlx migrate run --database-url $DATABASE_URL
+          echo "Migrations completed successfully"
+      - name: Verify database setup
+        run: |
+          echo "Verifying database setup..."
+          psql $DATABASE_URL -c "\dt" || echo "Failed to list tables"
+          psql $DATABASE_URL -c "SELECT COUNT(*) FROM users;" || echo "Failed to query users"
+          psql $DATABASE_URL -c "SELECT COUNT(*) FROM roles;" || echo "Failed to query roles"
+          psql $DATABASE_URL -c "SELECT COUNT(*) FROM permissions;" || echo "Failed to query permissions"
       - name: Run tests with coverage for SonarCloud
         run: |
           cargo tarpaulin --out Xml --all --release

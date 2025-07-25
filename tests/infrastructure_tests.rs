@@ -114,7 +114,7 @@ async fn test_postgres_permission_repository() {
 
     // Test list_permissions
     let permissions = repo.list_permissions().await.unwrap();
-    assert!(permissions.iter().any(|p| p.name == "test_read"));
+    assert!(permissions.iter().any(|p| p.name == permission_name));
 
     // Test assign_permission and role_has_permission
     let role_id = format!(
