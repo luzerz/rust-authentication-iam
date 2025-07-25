@@ -3,5 +3,5 @@ projectKey=luzerz_rust-authentication-iam
 serverUrl=https://sonarcloud.io
 serverVersion=8.0.0.65718
 dashboardUrl=https://sonarcloud.io/dashboard?id=luzerz_rust-authentication-iam
-ceTaskId=AZhCf2g9ASHTMQ1wW57L
-ceTaskUrl=https://sonarcloud.io/api/ce/task?id=AZhCf2g9ASHTMQ1wW57L
+ceTaskId=AZhD-ZqkSYGr1dhbDcFo
+ceTaskUrl=https://sonarcloud.io/api/ce/task?id=AZhD-ZqkSYGr1dhbDcFo
