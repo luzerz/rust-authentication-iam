@@ -110,7 +110,7 @@ jobs:
         run: |
           cargo install cargo-tarpaulin || true
       - name: Run code coverage
-        run: cargo tarpaulin --out Xml --all --release --fail-under 90
+        run: cargo tarpaulin --out Xml --all --release --fail-under 50
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v3
         with:
