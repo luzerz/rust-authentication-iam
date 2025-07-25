@@ -47,6 +47,6 @@ jobs:
               cargo fmt --all -- --check
               ;;
             "test-unit")
-              cargo test --lib --bins --tests --exclude infrastructure_tests --exclude database_connectivity_test --exclude integration_tests
+              cargo test --lib --bins --tests --exclude infrastructure_tests --workspace --exclude database_connectivity_test --exclude integration_tests
               ;;
           esac 

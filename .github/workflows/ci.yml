@@ -84,7 +84,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
       - name: Run unit tests
-        run: cargo test --lib --bins --tests --exclude infrastructure_tests --exclude database_connectivity_test --release
+        run: cargo test --lib --bins --tests --exclude infrastructure_tests --workspace --exclude database_connectivity_test --exclude integration_tests --release
 
   # Integration tests with database
   test-integration:
