@@ -11,6 +11,7 @@ pub struct InMemoryAbacPolicyRepository {
     pub role_policies: Mutex<HashMap<String, Vec<String>>>, // role_id -> policy_ids
 }
 
+
 impl InMemoryAbacPolicyRepository {
     pub fn new() -> Self {
         Self {
@@ -18,6 +19,12 @@ impl InMemoryAbacPolicyRepository {
             user_policies: Mutex::new(HashMap::new()),
             role_policies: Mutex::new(HashMap::new()),
         }
+    }
+}
+
+impl Default for InMemoryAbacPolicyRepository {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

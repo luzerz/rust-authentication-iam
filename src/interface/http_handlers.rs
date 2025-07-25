@@ -100,7 +100,7 @@ pub async fn login_handler(
         }
         Err(e) => {
             error!(email = %payload.email, error = ?e, event = "login_error");
-            (axum::http::StatusCode::UNAUTHORIZED, format!("Login failed: {:?}", e)).into_response()
+            (axum::http::StatusCode::UNAUTHORIZED, format!("Login failed: {e:?}")).into_response()
         }
     }
 }

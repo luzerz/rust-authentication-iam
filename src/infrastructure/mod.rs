@@ -69,6 +69,12 @@ impl InMemoryRoleRepository {
     }
 }
 
+impl Default for InMemoryRoleRepository {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[async_trait]
 impl RoleRepository for InMemoryRoleRepository {
     async fn create_role(&self, name: &str) -> Role {
@@ -123,6 +129,12 @@ impl InMemoryPermissionRepository {
             role_permissions: std::sync::Mutex::new(vec![]),
         }
     }
+}
+
+impl Default for InMemoryPermissionRepository {
+    fn default() -> Self {
+           Self::new()
+        }
 }
 
 #[async_trait]

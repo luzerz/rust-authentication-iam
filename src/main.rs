@@ -134,7 +134,7 @@ async fn main() {
 
     let http_host = env::var("HTTP_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
     let http_port = env::var("HTTP_PORT").unwrap_or_else(|_| "8080".to_string());
-    let http_addr = format!("{}:{}", http_host, http_port);
+    let http_addr = format!("{http_host}:{http_port}");
 
     let api_mode = env::var("API_MODE").unwrap_or_else(|_| "both".to_string());
 
@@ -165,7 +165,7 @@ async fn main() {
             .merge(SwaggerUi::new("/swagger").url("/openapi.json", openapi.clone()))
             .with_state(state.clone());
         let listener = TcpListener::bind(&http_addr).await.expect("Failed to bind");
-        println!("HTTP server running at http://{}", http_addr);
+        println!("HTTP server running at http://{http_addr}");
         axum::serve(listener, app).await.unwrap();
     };
 
