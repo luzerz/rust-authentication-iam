@@ -1,0 +1,6 @@
+CREATE TABLE users (
+  id TEXT PRIMARY KEY,
+  email TEXT UNIQUE NOT NULL,
+  password_hash TEXT NOT NULL,
+  is_locked BOOLEAN NOT NULL DEFAULT FALSE
+);
