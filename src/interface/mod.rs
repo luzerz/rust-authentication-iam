@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-#[derive(Deserialize, ToSchema)]
+#[derive(Serialize, Deserialize, ToSchema)]
 pub struct LoginRequest {
     pub email: String,
     pub password: String,
@@ -15,7 +15,7 @@ pub struct LoginResponse {
     pub refresh_token: String,
 }
 
-#[derive(Deserialize, ToSchema)]
+#[derive(Serialize, Deserialize, ToSchema)]
 pub struct ValidateTokenRequest {
     pub token: String,
 }
@@ -27,7 +27,7 @@ pub struct ValidateTokenResponse {
     pub roles: Vec<String>,
 }
 
-#[derive(Deserialize, ToSchema)]
+#[derive(Serialize, Deserialize, ToSchema)]
 pub struct RefreshTokenRequest {
     pub refresh_token: String,
 }
@@ -38,7 +38,7 @@ pub struct RefreshTokenResponse {
     pub refresh_token: String,
 }
 
-#[derive(Deserialize, ToSchema)]
+#[derive(Serialize, Deserialize, ToSchema)]
 pub struct LogoutRequest {
     pub refresh_token: String,
 }
@@ -48,7 +48,7 @@ pub struct LogoutResponse {
     pub success: bool,
 }
 
-#[derive(Deserialize, ToSchema)]
+#[derive(Serialize, Deserialize, ToSchema)]
 pub struct CreateRoleRequest {
     pub name: String,
 }
@@ -65,19 +65,19 @@ pub struct RolesListResponse {
     pub roles: Vec<RoleResponse>,
 }
 
-#[derive(Deserialize, ToSchema)]
+#[derive(Serialize, Deserialize, ToSchema)]
 pub struct AssignRoleRequest {
     pub user_id: String,
     pub role_id: String,
 }
 
-#[derive(Deserialize, ToSchema)]
+#[derive(Serialize, Deserialize, ToSchema)]
 pub struct RemoveRoleRequest {
     pub user_id: String,
     pub role_id: String,
 }
 
-#[derive(Deserialize, ToSchema)]
+#[derive(Serialize, Deserialize, ToSchema)]
 pub struct CreatePermissionRequest {
     pub name: String,
 }
@@ -93,13 +93,13 @@ pub struct PermissionsListResponse {
     pub permissions: Vec<PermissionResponse>,
 }
 
-#[derive(Deserialize, ToSchema)]
+#[derive(Serialize, Deserialize, ToSchema)]
 pub struct AssignPermissionRequest {
     pub role_id: String,
     pub permission_id: String,
 }
 
-#[derive(Deserialize, ToSchema)]
+#[derive(Serialize, Deserialize, ToSchema)]
 pub struct RemovePermissionRequest {
     pub role_id: String,
     pub permission_id: String,

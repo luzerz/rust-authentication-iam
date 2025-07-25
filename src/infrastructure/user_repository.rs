@@ -4,6 +4,8 @@ use async_trait::async_trait;
 use sqlx::FromRow;
 use sqlx::PgPool;
 use std::collections::HashMap;
+use std::collections::HashSet;
+use std::sync::Mutex;
 
 #[derive(Debug, FromRow)]
 struct UserRow {
@@ -136,6 +138,40 @@ impl RefreshTokenRepository for PostgresRefreshTokenRepository {
         .fetch_optional(&self.pool)
         .await?;
         Ok(rec.unwrap_or(false))
+    }
+}
+
+pub struct InMemoryRefreshTokenRepository {
+    valid_tokens: Mutex<HashSet<String>>,
+    revoked_tokens: Mutex<HashSet<String>>,
+}
+
+impl InMemoryRefreshTokenRepository {
+    pub fn new() -> Self {
+        Self {
+            valid_tokens: Mutex::new(HashSet::new()),
+            revoked_tokens: Mutex::new(HashSet::new()),
+        }
+    }
+}
+
+#[async_trait]
+impl RefreshTokenRepository for InMemoryRefreshTokenRepository {
+    async fn insert(
+        &self,
+        token: crate::application::services::RefreshToken,
+    ) -> Result<(), sqlx::Error> {
+        self.valid_tokens.lock().unwrap().insert(token.jti);
+        Ok(())
+    }
+    async fn revoke(&self, jti: &str) -> Result<(), sqlx::Error> {
+        self.revoked_tokens.lock().unwrap().insert(jti.to_string());
+        Ok(())
+    }
+    async fn is_valid(&self, jti: &str) -> Result<bool, sqlx::Error> {
+        let valid = self.valid_tokens.lock().unwrap().contains(jti);
+        let revoked = self.revoked_tokens.lock().unwrap().contains(jti);
+        Ok(valid && !revoked)
     }
 }
 

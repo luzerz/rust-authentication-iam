@@ -31,3 +31,4 @@ utoipa = "5.4.0"
 [dev-dependencies]
 reqwest = { version = "0.12", features = ["json"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tower = "0.5"
