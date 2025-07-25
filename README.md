@@ -1,7 +1,7 @@
 [![CI/CD](https://github.com/luzerz/rust-authentication-iam/actions/workflows/ci.yml/badge.svg)](https://github.com/luzerz/rust-authentication-iam/actions/workflows/ci.yml) [![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=luzerz_rust-authentication-iam&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=luzerz_rust-authentication-iam) [![Coverage](https://sonarcloud.io/api/project_badges/measure?project=luzerz_rust-authentication-iam&metric=coverage)](https://sonarcloud.io/summary/new_code?id=luzerz_rust-authentication-iam) [![Security Rating](https://sonarcloud.io/api/project_badges/measure?project=luzerz_rust-authentication-iam&metric=security_rating)](https://sonarcloud.io/summary/new_code?id=luzerz_rust-authentication-iam) [![Vulnerabilities](https://sonarcloud.io/api/project_badges/measure?project=luzerz_rust-authentication-iam&metric=vulnerabilities)](https://sonarcloud.io/summary/new_code?id=luzerz_rust-authentication-iam)
 # Authentication Service (IAM)
 
-A robust, production-grade Identity and Access Management (IAM) service written in Rust. Implements authentication, RBAC, and ABAC with JWT, OpenAPI docs, and high test coverage.
+A comprehensive Identity and Access Management (IAM) service built with Rust, featuring authentication, authorization, and user management capabilities.
 
 ## Features
 - User authentication with JWT (access & refresh tokens)
@@ -30,29 +30,39 @@ A robust, production-grade Identity and Access Management (IAM) service written 
 - CQRS (Commands/Queries)
 - Modular: `domain`, `application`, `infrastructure`, `interface`
 
-## API Versioning
-All endpoints are under `/v1/iam/...` (e.g., `/v1/iam/login`).
+### Prerequisites
 
-## Running Locally
-1. **Clone the repo:**
-   ```sh
-   git clone <repo-url>
+- Rust 1.88.0 or later
+- PostgreSQL 15
+- Docker (for development)
+
+### Local Development
+
+1. **Clone the repository**
+   ```bash
+   git clone <repository-url>
    cd authentication-service
    ```
-2. **Set up environment:**
-   - Copy `.env.example` to `.env` and fill in secrets (see below).
-3. **Run Postgres (Docker):**
-   ```sh
-   docker-compose up -d
-   # or use your own Postgres instance
+
+2. **Set up environment**
+   ```bash
+   cp .env.example .env
+   # Edit .env with your database configuration
    ```
-4. **Run migrations:**
-   ```sh
-   # If using sqlx-cli
+
+3. **Start the database**
+   ```bash
+   docker-compose up -d db
+   ```
+
+4. **Run migrations**
+   ```bash
+   cargo install sqlx-cli --no-default-features --features postgres
    sqlx migrate run
    ```
-5. **Run the server:**
-   ```sh
+
+5. **Run the service**
+   ```bash
    cargo run
    ```
 6. **View Swagger UI:**
@@ -70,34 +80,147 @@ All endpoints are under `/v1/iam/...` (e.g., `/v1/iam/login`).
 - All endpoints are tagged (`Auth`, `RBAC`, `ABAC`) and documented.
 
 ## Testing
-- Run all tests:
-  ```sh
-  cargo test
-  ```
-- 90%+ coverage expected (unit, integration, E2E)
 
-## Contribution
-- Fork, branch, and PR as usual.
-- Add/extend tests for all new features.
+### Run All Tests
+```bash
+cargo test
+```
 
-## RBAC/ABAC
-- RBAC: Manage roles, permissions, assignments
-- ABAC: Define policies with conditions, assign to users/roles
-- All permission checks go through `AuthZService`
+### Run Tests with Database
+```bash
+./scripts/run_tests_with_db.sh
+```
 
-## CI/CD
+### Run Specific Test Categories
+```bash
+# Unit tests only
+cargo test --lib
 
-This project is set up for CI/CD using GitHub Actions (or your preferred CI system).
+# Integration tests
+cargo test --test integration_tests
 
-Typical pipeline steps:
-- **Build:** Ensure the project compiles on all supported platforms.
-- **Test:** Run all unit, integration, and E2E tests (90%+ coverage required).
-- **Lint/Format:** Enforce Rust formatting and linting (`cargo fmt`, `cargo clippy`).
-- **Coverage:** Check code coverage and fail if below threshold.
+# Infrastructure tests with database
+DATABASE_URL="postgres://test_user:test_pass@localhost:5433/test_auth_db" cargo test --test infrastructure_tests
+```
 
-A sample workflow is provided in `.github/workflows/ci.yml` (add or customize as needed).
+## CI/CD Pipeline
 
-## Project Tasks
+The project includes a comprehensive CI/CD pipeline with:
+
+- **Build**: Compilation and dependency management
+- **Testing**: Unit and integration tests with database
+- **Linting**: Code quality checks with Clippy
+- **Formatting**: Code style validation with rustfmt
+- **Coverage**: Test coverage analysis (60% minimum)
+- **SonarCloud**: Code quality and security analysis
+
+### Quality Gates
+
+- **Coverage**: Minimum 60% test coverage
+- **Code Quality**: SonarCloud quality gates
+- **Security**: Automated security scanning
+- **Performance**: Build and test performance monitoring
+
+## Documentation
+
+- [API Documentation](http://localhost:8080/swagger) - Interactive API docs
+- [Test Database Setup](TEST_DATABASE_SETUP.md) - Database testing guide
+- [CI/CD Setup](CI_CD_SETUP.md) - Complete pipeline documentation
+- [SonarCloud Setup](SONARCLOUD_SETUP.md) - Quality analysis setup
+
+## Architecture
+
+### Domain Layer
+- **User**: User entity with authentication and role management
+- **Role**: Role-based access control implementation
+- **Permission**: Fine-grained permission system
+- **ABAC Policy**: Attribute-based access control policies
+
+### Application Layer
+- **AuthService**: Authentication logic
+- **TokenService**: JWT token management
+- **PasswordService**: Password hashing and verification
+- **AuthZService**: Authorization logic
+
+### Infrastructure Layer
+- **PostgreSQL Repositories**: Database implementations
+- **In-Memory Repositories**: Testing and development
+- **Migration System**: Database schema management
+
+### Interface Layer
+- **HTTP Handlers**: REST API endpoints
+- **gRPC Services**: High-performance RPC endpoints
+- **Middleware**: Authentication and authorization middleware
+
+## API Endpoints
+
+### Authentication
+- `POST /v1/iam/login` - User login
+- `POST /v1/iam/validate-token` - Token validation
+- `POST /v1/iam/refresh-token` - Token refresh
+- `POST /v1/iam/logout` - User logout
+
+### User Management
+- `POST /v1/iam/roles` - Create role
+- `GET /v1/iam/roles` - List roles
+- `DELETE /v1/iam/roles/{id}` - Delete role
+- `POST /v1/iam/roles/assign` - Assign role to user
+- `POST /v1/iam/roles/remove` - Remove role from user
+
+### Permission Management
+- `POST /v1/iam/permissions` - Create permission
+- `GET /v1/iam/permissions` - List permissions
+- `DELETE /v1/iam/permissions/{id}` - Delete permission
+- `POST /v1/iam/permissions/assign` - Assign permission to role
+- `POST /v1/iam/permissions/remove` - Remove permission from role
+
+### ABAC Policies
+- `POST /v1/iam/abac/policies` - Create ABAC policy
+- `GET /v1/iam/abac/policies` - List ABAC policies
+- `DELETE /v1/iam/abac/policies/{id}` - Delete ABAC policy
+- `POST /v1/iam/abac/assign` - Assign ABAC policy
+
+## Development
+
+### Code Quality
+
+The project maintains high code quality standards:
+
+- **Rustfmt**: Consistent code formatting
+- **Clippy**: Linting and best practices
+- **SonarCloud**: Code quality and security analysis
+- **Test Coverage**: Comprehensive test suite
+
+### Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Add tests for new functionality
+5. Ensure all tests pass
+6. Submit a pull request
+
+### Testing Strategy
+
+- **Unit Tests**: Test individual components in isolation
+- **Integration Tests**: Test component interactions
+- **Database Tests**: Test with real PostgreSQL database
+- **API Tests**: Test HTTP endpoints end-to-end
+
+## Deployment
+
+### Docker
+
+```bash
+# Build the image
+docker build -t authentication-service .
+
+# Run with environment variables
+docker run -p 8080:8080 \
+  -e DATABASE_URL=postgres://user:pass@host:5432/db \
+  -e JWT_SECRET=your_secret \
+  authentication-service
+```
 
 ### Completed
 - Domain models: User, Role, Permission, Token (with business logic and unit tests)
@@ -133,4 +256,12 @@ A sample workflow is provided in `.github/workflows/ci.yml` (add or customize as
 - Add user registration, password change/reset endpoints
 
 ## License
-MIT  
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Support
+
+For questions and support:
+- Create an issue in the GitHub repository
+- Check the documentation in the `/docs` directory
+- Review the API documentation at `/swagger`  
