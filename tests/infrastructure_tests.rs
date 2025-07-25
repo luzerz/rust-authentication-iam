@@ -8,7 +8,6 @@ use authentication_service::infrastructure::{
 };
 use bcrypt::{DEFAULT_COST, hash};
 use sqlx::PgPool;
-use uuid::Uuid;
 
 #[tokio::test]
 async fn test_in_memory_user_repository_find_by_email() {
