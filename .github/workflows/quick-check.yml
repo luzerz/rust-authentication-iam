@@ -1,0 +1,52 @@
+name: Quick Check
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Fast checks for quick feedback
+  quick-checks:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        check: [lint, fmt, test-unit]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          components: ${{ matrix.check == 'lint' && 'clippy' || matrix.check == 'fmt' && 'rustfmt' || '' }}
+      - name: Cache cargo registry
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+      - name: Run ${{ matrix.check }}
+        run: |
+          case "${{ matrix.check }}" in
+            "lint")
+              cargo clippy --all -- -D warnings
+              ;;
+            "fmt")
+              cargo fmt --all -- --check
+              ;;
+            "test-unit")
+              cargo test --lib --bins --tests --exclude infrastructure_tests --exclude database_connectivity_test --exclude integration_tests
+              ;;
+          esac 

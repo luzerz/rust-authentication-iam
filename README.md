@@ -81,13 +81,31 @@ A comprehensive Identity and Access Management (IAM) service built with Rust, fe
 
 ## Testing
 
-### Run All Tests
+### Quick Local Checks
 ```bash
-cargo test
+# Lint and format
+cargo clippy --all -- -D warnings
+cargo fmt --all -- --check
+
+# Unit tests (fast, no database)
+cargo test --lib --bins --tests --exclude infrastructure_tests --exclude database_connectivity_test --exclude integration_tests
 ```
 
-### Run Tests with Database
+### Integration Tests
 ```bash
+# Set up test database
+./scripts/setup_test_db.sh
+
+# Run integration tests
+DATABASE_URL="postgres://test_user:test_pass@localhost:5433/test_auth_db" cargo test --test infrastructure_tests
+
+# Clean up
+./scripts/cleanup_test_db.sh
+```
+
+### All Tests
+```bash
+# Run all tests with database
 ./scripts/run_tests_with_db.sh
 ```
 
