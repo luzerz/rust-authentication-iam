@@ -88,7 +88,7 @@ cargo clippy --all -- -D warnings
 cargo fmt --all -- --check
 
 # Unit tests (fast, no database)
-cargo test --lib --bins --tests --exclude infrastructure_tests --exclude database_connectivity_test --exclude integration_tests
+DATABASE_URL="" cargo test --lib --bins --tests --workspace
 ```
 
 ### Integration Tests

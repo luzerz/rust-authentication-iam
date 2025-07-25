@@ -84,7 +84,10 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
       - name: Run unit tests
-        run: cargo test --lib --bins --tests --workspace--exclude infrastructure_tests --exclude database_connectivity_test --exclude integration_tests
+        run: |
+          # Skip database tests by unsetting DATABASE_URL
+          # This will cause database tests to be skipped
+          unset DATABASE_URL && cargo test --lib --bins --tests --workspace
 
   # Integration tests with database
   test-integration:
