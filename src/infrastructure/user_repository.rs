@@ -1,9 +1,9 @@
-use crate::domain::user::User;
 use super::UserRepository;
-use std::collections::HashMap;
+use crate::domain::user::User;
 use async_trait::async_trait;
-use sqlx::PgPool;
 use sqlx::FromRow;
+use sqlx::PgPool;
+use std::collections::HashMap;
 
 #[derive(Debug, FromRow)]
 struct UserRow {
@@ -54,18 +54,17 @@ unsafe impl Sync for PostgresUserRepository {}
 impl UserRepository for PostgresUserRepository {
     async fn find_by_email(&self, email: &str) -> Option<User> {
         let row = sqlx::query_as::<_, UserRow>(
-            "SELECT id, email, password_hash, is_locked FROM users WHERE email = $1"
+            "SELECT id, email, password_hash, is_locked FROM users WHERE email = $1",
         )
         .bind(email)
         .fetch_optional(&self.pool)
         .await
-        .ok()?
-        ?;
+        .ok()??;
         // Load roles
         let roles: Vec<String> = sqlx::query_as::<_, RoleRow>(
             "SELECT r.name FROM roles r \
              INNER JOIN user_roles ur ON ur.role_id = r.id \
-             WHERE ur.user_id = $1"
+             WHERE ur.user_id = $1",
         )
         .bind(&row.id)
         .fetch_all(&self.pool)
@@ -87,7 +86,10 @@ impl UserRepository for PostgresUserRepository {
 
 #[async_trait]
 pub trait RefreshTokenRepository: Send + Sync {
-    async fn insert(&self, token: crate::application::services::RefreshToken) -> Result<(), sqlx::Error>;
+    async fn insert(
+        &self,
+        token: crate::application::services::RefreshToken,
+    ) -> Result<(), sqlx::Error>;
     async fn revoke(&self, jti: &str) -> Result<(), sqlx::Error>;
     async fn is_valid(&self, jti: &str) -> Result<bool, sqlx::Error>;
 }
@@ -104,7 +106,10 @@ impl PostgresRefreshTokenRepository {
 
 #[async_trait]
 impl RefreshTokenRepository for PostgresRefreshTokenRepository {
-    async fn insert(&self, token: crate::application::services::RefreshToken) -> Result<(), sqlx::Error> {
+    async fn insert(
+        &self,
+        token: crate::application::services::RefreshToken,
+    ) -> Result<(), sqlx::Error> {
         sqlx::query(
             "INSERT INTO refresh_tokens (jti, user_id, expires_at, revoked) VALUES ($1, $2, $3, $4)"
         )
@@ -125,7 +130,7 @@ impl RefreshTokenRepository for PostgresRefreshTokenRepository {
     }
     async fn is_valid(&self, jti: &str) -> Result<bool, sqlx::Error> {
         let rec = sqlx::query_scalar::<_, bool>(
-            "SELECT NOT revoked FROM refresh_tokens WHERE jti = $1 AND expires_at > NOW()"
+            "SELECT NOT revoked FROM refresh_tokens WHERE jti = $1 AND expires_at > NOW()",
         )
         .bind(jti)
         .fetch_optional(&self.pool)
@@ -140,4 +145,4 @@ impl RefreshTokenRepository for PostgresRefreshTokenRepository {
 //   email TEXT UNIQUE NOT NULL,
 //   password_hash TEXT NOT NULL,
 //   is_locked BOOLEAN NOT NULL DEFAULT FALSE
-// ); 
+// );

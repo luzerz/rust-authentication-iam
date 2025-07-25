@@ -1,4 +1,4 @@
-use bcrypt::{verify, BcryptError};
+use bcrypt::{BcryptError, verify};
 
 /// User aggregate: represents an authenticated user in the system.
 #[derive(Clone, Debug)]
@@ -47,7 +47,7 @@ impl User {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bcrypt::{hash, DEFAULT_COST};
+    use bcrypt::{DEFAULT_COST, hash};
 
     fn create_test_user() -> User {
         let password_hash = hash("password123", DEFAULT_COST).unwrap();
@@ -73,7 +73,7 @@ mod tests {
     #[test]
     fn test_password_verification() {
         let user = create_test_user();
-        
+
         assert!(user.verify_password("password123").unwrap());
         assert!(!user.verify_password("wrongpassword").unwrap());
     }
@@ -81,7 +81,7 @@ mod tests {
     #[test]
     fn test_account_locking() {
         let mut user = create_test_user();
-        
+
         assert!(!user.is_account_locked());
         user.lock_account();
         assert!(user.is_account_locked());
@@ -157,8 +157,8 @@ mod tests {
     fn test_user_debug() {
         let user = create_test_user();
         let debug_str = format!("{:?}", user);
-        
+
         assert!(debug_str.contains("user1"));
         assert!(debug_str.contains("test@example.com"));
     }
-} 
+}

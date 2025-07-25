@@ -22,4 +22,4 @@ mod tests {
         assert_eq!(perm.id, "perm1");
         assert_eq!(perm.name, "read");
     }
-} 
+}

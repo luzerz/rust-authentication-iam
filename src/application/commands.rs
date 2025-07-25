@@ -21,4 +21,4 @@ pub struct ResetPasswordCommand {
 pub struct AssignRolesCommand {
     pub user_id: String,
     pub role_ids: Vec<String>,
-} 
+}

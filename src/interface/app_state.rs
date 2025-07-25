@@ -1,7 +1,10 @@
-use std::sync::Arc;
-use crate::infrastructure::{UserRepository, RefreshTokenRepository, RoleRepository, PermissionRepository, AbacPolicyRepository};
-use crate::application::services::{AuthService, TokenService, PasswordService, AuthZService};
 use crate::application::handlers::LoginUserHandler;
+use crate::application::services::{AuthService, AuthZService, PasswordService, TokenService};
+use crate::infrastructure::{
+    AbacPolicyRepository, PermissionRepository, RefreshTokenRepository, RoleRepository,
+    UserRepository,
+};
+use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -15,4 +18,4 @@ pub struct AppState {
     pub permission_repo: Arc<dyn PermissionRepository>,
     pub abac_policy_repo: Arc<dyn AbacPolicyRepository>,
     pub authz_service: Arc<AuthZService>,
-} 
+}

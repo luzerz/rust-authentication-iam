@@ -1,8 +1,8 @@
-use std::sync::Arc;
-use super::services::{AuthService, TokenService, PasswordService, AuthError};
 use super::commands::LoginUserCommand;
-use crate::infrastructure::UserRepository;
+use super::services::{AuthError, AuthService, PasswordService, TokenService};
 use crate::infrastructure::RefreshTokenRepository;
+use crate::infrastructure::UserRepository;
+use std::sync::Arc;
 use tracing::instrument;
 
 pub struct LoginUserHandler;
@@ -20,14 +20,12 @@ impl LoginUserHandler {
         refresh_token_repo: Arc<dyn RefreshTokenRepository>,
     ) -> Result<(String, String), AuthError> {
         tracing::info!("Authenticating user");
-        let user = auth_service.authenticate_user(
-            &cmd.email,
-            &cmd.password,
-            user_repo,
-            password_service,
-        ).await?;
+        let user = auth_service
+            .authenticate_user(&cmd.email, &cmd.password, user_repo, password_service)
+            .await?;
         tracing::info!(user_id = %user.id, "User authenticated, issuing tokens");
-        let (access_token, refresh_token) = token_service.issue_tokens(&user, refresh_token_repo).await;
+        let (access_token, refresh_token) =
+            token_service.issue_tokens(&user, refresh_token_repo).await;
         tracing::info!(user_id = %user.id, "Tokens issued");
         Ok((access_token, refresh_token))
     }
@@ -35,15 +33,15 @@ impl LoginUserHandler {
 
 pub struct ChangePasswordHandler;
 pub struct ResetPasswordHandler;
-pub struct AssignRolesHandler; 
+pub struct AssignRolesHandler;
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
-    use bcrypt::{hash, DEFAULT_COST};
     use crate::domain::user::User;
     use async_trait::async_trait;
+    use bcrypt::{DEFAULT_COST, hash};
+    use std::sync::Arc;
 
     // Mock implementations for testing
     struct MockUserRepository {
@@ -79,7 +77,10 @@ mod tests {
 
     #[async_trait]
     impl RefreshTokenRepository for MockRefreshTokenRepository {
-        async fn insert(&self, _token: crate::application::services::RefreshToken) -> Result<(), sqlx::Error> {
+        async fn insert(
+            &self,
+            _token: crate::application::services::RefreshToken,
+        ) -> Result<(), sqlx::Error> {
             Ok(())
         }
 
@@ -98,7 +99,7 @@ mod tests {
         unsafe {
             std::env::set_var("JWT_SECRET", "test-secret-key-for-testing-only");
         }
-        
+
         let handler = LoginUserHandler;
         let auth_service = AuthService;
         let token_service = TokenService;
@@ -199,7 +200,7 @@ mod tests {
         let auth_service = AuthService;
         let token_service = TokenService;
         let password_service = PasswordService;
-        
+
         // Create a repository with a locked user
         let mut user_repo = MockUserRepository::new();
         let password_hash = hash("password123", DEFAULT_COST).unwrap();
@@ -210,7 +211,9 @@ mod tests {
             roles: vec!["user".to_string()],
             is_locked: true,
         };
-        user_repo.users.insert("locked@example.com".to_string(), locked_user);
+        user_repo
+            .users
+            .insert("locked@example.com".to_string(), locked_user);
         let user_repo = Arc::new(user_repo);
         let refresh_token_repo = Arc::new(MockRefreshTokenRepository);
 
@@ -236,4 +239,4 @@ mod tests {
             _ => panic!("Expected AccountLocked error"),
         }
     }
-} 
+}

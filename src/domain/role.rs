@@ -40,4 +40,4 @@ mod tests {
         role.remove_permission("perm1");
         assert!(!role.permissions.contains(&"perm1".to_string()));
     }
-} 
+}

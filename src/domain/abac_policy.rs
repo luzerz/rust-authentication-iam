@@ -1,4 +1,4 @@
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AbacPolicy {
@@ -41,4 +41,4 @@ mod tests {
         assert_eq!(policy.name, "Allow engineers");
         assert_eq!(policy.conditions.len(), 1);
     }
-} 
+}

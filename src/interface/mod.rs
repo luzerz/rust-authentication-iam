@@ -103,7 +103,7 @@ pub struct AssignPermissionRequest {
 pub struct RemovePermissionRequest {
     pub role_id: String,
     pub permission_id: String,
-} 
+}
 
 #[derive(serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
 pub struct AbacPolicyRequest {
@@ -137,7 +137,7 @@ pub struct AssignAbacPolicyRequest {
     pub target_type: String, // "user" or "role"
     pub target_id: String,
     pub policy_id: String,
-} 
+}
 
 #[derive(serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
 pub struct ErrorResponse {
@@ -149,8 +149,10 @@ pub mod http_handlers;
 
 pub use app_state::AppState;
 pub use http_handlers::{
-    login_handler, validate_token_handler, refresh_token_handler, logout_handler,
-    create_role_handler, list_roles_handler, delete_role_handler, assign_role_handler, remove_role_handler,
-    create_permission_handler, list_permissions_handler, delete_permission_handler, assign_permission_handler, remove_permission_handler,
-    create_abac_policy_handler, list_abac_policies_handler, delete_abac_policy_handler, assign_abac_policy_handler,
-}; 
+    assign_abac_policy_handler, assign_permission_handler, assign_role_handler,
+    create_abac_policy_handler, create_permission_handler, create_role_handler,
+    delete_abac_policy_handler, delete_permission_handler, delete_role_handler,
+    list_abac_policies_handler, list_permissions_handler, list_roles_handler, login_handler,
+    logout_handler, refresh_token_handler, remove_permission_handler, remove_role_handler,
+    validate_token_handler,
+};

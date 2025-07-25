@@ -1,18 +1,23 @@
-use std::sync::Arc;
 use crate::domain::user::User;
-use crate::infrastructure::UserRepository;
-use crate::infrastructure::RefreshTokenRepository;
 use crate::infrastructure::AbacPolicyRepository;
-use jsonwebtoken::{encode, Header, EncodingKey, Algorithm, decode, DecodingKey, Validation, TokenData, errors::Error as JwtError};
-use serde::{Serialize, Deserialize};
-use chrono::{Utc, Duration};
-use std::env;
+use crate::infrastructure::RefreshTokenRepository;
+use crate::infrastructure::UserRepository;
+use chrono::{Duration, Utc};
+use jsonwebtoken::{
+    Algorithm, DecodingKey, EncodingKey, Header, TokenData, Validation, decode, encode,
+    errors::Error as JwtError,
+};
 use once_cell::sync::Lazy;
+use serde::{Deserialize, Serialize};
+use std::env;
+use std::sync::Arc;
+use tracing::{error, info, instrument};
 use uuid::Uuid;
-use tracing::{instrument, info, error};
 
 static JWT_SECRET: Lazy<Vec<u8>> = Lazy::new(|| {
-    env::var("JWT_SECRET").expect("JWT_SECRET must be set").into_bytes()
+    env::var("JWT_SECRET")
+        .expect("JWT_SECRET must be set")
+        .into_bytes()
 });
 const ACCESS_TOKEN_EXP_MIN: i64 = 15;
 const REFRESH_TOKEN_EXP_MIN: i64 = 60 * 24 * 7; // 7 days
@@ -36,11 +41,15 @@ pub struct RefreshToken {
 pub struct AuthService;
 pub struct PasswordService;
 pub struct TokenService;
-pub struct RoleService; 
+pub struct RoleService;
 
 impl AuthService {
     /// Authenticates a user by email and password. Returns user if successful.
-    #[instrument(name = "authenticate_user", skip(self, user_repo, password_service), fields(email))]
+    #[instrument(
+        name = "authenticate_user",
+        skip(self, user_repo, password_service),
+        fields(email)
+    )]
     pub async fn authenticate_user(
         &self,
         email: &str,
@@ -49,7 +58,10 @@ impl AuthService {
         password_service: &PasswordService,
     ) -> Result<User, AuthError> {
         info!("Looking up user");
-        let user = user_repo.find_by_email(email).await.ok_or(AuthError::InvalidCredentials)?;
+        let user = user_repo
+            .find_by_email(email)
+            .await
+            .ok_or(AuthError::InvalidCredentials)?;
         if user.is_account_locked() {
             error!(user_id = %user.id, "Account is locked");
             return Err(AuthError::AccountLocked);
@@ -73,7 +85,11 @@ impl PasswordService {
 impl TokenService {
     /// Issues a new JWT access token and refresh token for the user, and stores the refresh token in the DB.
     #[instrument(name = "issue_tokens", skip(self, user, refresh_token_repo))]
-    pub async fn issue_tokens(&self, user: &User, refresh_token_repo: Arc<dyn RefreshTokenRepository>) -> (String, String) {
+    pub async fn issue_tokens(
+        &self,
+        user: &User,
+        refresh_token_repo: Arc<dyn RefreshTokenRepository>,
+    ) -> (String, String) {
         info!(user_id = %user.id, "Generating tokens");
         let now = Utc::now();
         let access_jti = Uuid::new_v4().to_string();
@@ -94,12 +110,14 @@ impl TokenService {
             &Header::new(Algorithm::HS256),
             &access_claims,
             &EncodingKey::from_secret(&JWT_SECRET),
-        ).unwrap();
+        )
+        .unwrap();
         let refresh_token = encode(
             &Header::new(Algorithm::HS256),
             &refresh_claims,
             &EncodingKey::from_secret(&JWT_SECRET),
-        ).unwrap();
+        )
+        .unwrap();
         // Store refresh token in DB
         let refresh_token_record = RefreshToken {
             jti: refresh_jti.clone(),
@@ -127,13 +145,24 @@ impl TokenService {
 
     /// Validates a refresh token and issues new tokens if valid, checking the DB.
     #[instrument(name = "refresh_tokens", skip(self, user, refresh_token_repo))]
-    pub async fn refresh_tokens(&self, refresh_token: &str, user: &User, refresh_token_repo: Arc<dyn RefreshTokenRepository>) -> Result<(String, String), JwtError> {
+    pub async fn refresh_tokens(
+        &self,
+        refresh_token: &str,
+        user: &User,
+        refresh_token_repo: Arc<dyn RefreshTokenRepository>,
+    ) -> Result<(String, String), JwtError> {
         info!(user_id = %user.id, "Refreshing tokens");
         let claims = self.validate_token(refresh_token)?;
         // Check DB for validity
-        if !refresh_token_repo.is_valid(&claims.jti).await.unwrap_or(false) {
+        if !refresh_token_repo
+            .is_valid(&claims.jti)
+            .await
+            .unwrap_or(false)
+        {
             error!(user_id = %user.id, "Refresh token is invalid or revoked");
-            return Err(JwtError::from(jsonwebtoken::errors::ErrorKind::InvalidToken));
+            return Err(JwtError::from(
+                jsonwebtoken::errors::ErrorKind::InvalidToken,
+            ));
         }
         // Optionally, revoke the old token (rotation)
         let _ = refresh_token_repo.revoke(&claims.jti).await;
@@ -147,7 +176,7 @@ pub enum AuthError {
     InvalidCredentials,
     AccountLocked,
     Other(String),
-} 
+}
 
 pub struct AuthZService {
     pub role_repo: Arc<dyn crate::infrastructure::RoleRepository>,
@@ -156,14 +185,22 @@ pub struct AuthZService {
 }
 
 impl AuthZService {
-    pub async fn user_has_permission(&self, user_id: &str, permission_name: &str, user_attrs: Option<&std::collections::HashMap<String, String>>) -> Result<bool, sqlx::Error> {
+    pub async fn user_has_permission(
+        &self,
+        user_id: &str,
+        permission_name: &str,
+        user_attrs: Option<&std::collections::HashMap<String, String>>,
+    ) -> Result<bool, sqlx::Error> {
         // RBAC check
         let roles = self.role_repo.get_roles_for_user(user_id).await?;
         let perms = self.permission_repo.list_permissions().await?;
         for role in &roles {
             for perm in &perms {
                 if perm.name == permission_name {
-                    let assigned = self.permission_repo.role_has_permission(&role.id, &perm.id).await?;
+                    let assigned = self
+                        .permission_repo
+                        .role_has_permission(&role.id, &perm.id)
+                        .await?;
                     if assigned {
                         return Ok(true);
                     }
@@ -172,15 +209,23 @@ impl AuthZService {
         }
         // ABAC check
         if let Some(attrs) = user_attrs {
-            if self.user_has_abac_permission(user_id, permission_name, attrs).await? {
+            if self
+                .user_has_abac_permission(user_id, permission_name, attrs)
+                .await?
+            {
                 return Ok(true);
             }
         }
         Ok(false)
     }
 
-    pub async fn user_has_abac_permission(&self, user_id: &str, permission_name: &str, user_attrs: &std::collections::HashMap<String, String>) -> Result<bool, sqlx::Error> {
-        use crate::domain::abac_policy::{AbacEffect};
+    pub async fn user_has_abac_permission(
+        &self,
+        user_id: &str,
+        permission_name: &str,
+        user_attrs: &std::collections::HashMap<String, String>,
+    ) -> Result<bool, sqlx::Error> {
+        use crate::domain::abac_policy::AbacEffect;
         let policies = self.abac_repo.get_policies_for_user(user_id).await?;
         for policy in &policies {
             // For now, assume policy name == permission_name (can be extended)
@@ -189,10 +234,13 @@ impl AuthZService {
                 for cond in &policy.conditions {
                     let val = user_attrs.get(&cond.attribute);
                     match (val, cond.operator.as_str()) {
-                        (Some(v), "eq") if v == &cond.value => {},
-                        (Some(v), "ne") if v != &cond.value => {},
+                        (Some(v), "eq") if v == &cond.value => {}
+                        (Some(v), "ne") if v != &cond.value => {}
                         // Extend with more operators as needed
-                        _ => { all_match = false; break; }
+                        _ => {
+                            all_match = false;
+                            break;
+                        }
                     }
                 }
                 if all_match {
@@ -207,10 +255,10 @@ impl AuthZService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
-    use bcrypt::{hash, DEFAULT_COST};
     use crate::domain::user::User;
     use async_trait::async_trait;
+    use bcrypt::{DEFAULT_COST, hash};
+    use std::sync::Arc;
 
     // Set up test environment
     fn setup_test_env() {
@@ -279,7 +327,12 @@ mod tests {
         let user_repo = Arc::new(MockUserRepository::new());
 
         let result = auth_service
-            .authenticate_user("test@example.com", "password123", user_repo, &password_service)
+            .authenticate_user(
+                "test@example.com",
+                "password123",
+                user_repo,
+                &password_service,
+            )
             .await;
 
         assert!(result.is_ok());
@@ -295,7 +348,12 @@ mod tests {
         let user_repo = Arc::new(MockUserRepository::new());
 
         let result = auth_service
-            .authenticate_user("test@example.com", "wrongpassword", user_repo, &password_service)
+            .authenticate_user(
+                "test@example.com",
+                "wrongpassword",
+                user_repo,
+                &password_service,
+            )
             .await;
 
         assert!(result.is_err());
@@ -312,7 +370,12 @@ mod tests {
         let user_repo = Arc::new(MockUserRepository::new());
 
         let result = auth_service
-            .authenticate_user("nonexistent@example.com", "password123", user_repo, &password_service)
+            .authenticate_user(
+                "nonexistent@example.com",
+                "password123",
+                user_repo,
+                &password_service,
+            )
             .await;
 
         assert!(result.is_err());
@@ -327,7 +390,7 @@ mod tests {
         let auth_service = AuthService;
         let password_service = PasswordService;
         let mut user_repo = MockUserRepository::new();
-        
+
         // Create a locked user
         let password_hash = hash("password123", DEFAULT_COST).unwrap();
         let locked_user = User {
@@ -337,11 +400,18 @@ mod tests {
             roles: vec!["user".to_string()],
             is_locked: true,
         };
-        user_repo.users.insert("locked@example.com".to_string(), locked_user);
+        user_repo
+            .users
+            .insert("locked@example.com".to_string(), locked_user);
         let user_repo = Arc::new(user_repo);
 
         let result = auth_service
-            .authenticate_user("locked@example.com", "password123", user_repo, &password_service)
+            .authenticate_user(
+                "locked@example.com",
+                "password123",
+                user_repo,
+                &password_service,
+            )
             .await;
 
         assert!(result.is_err());
@@ -379,7 +449,8 @@ mod tests {
         };
         let refresh_token_repo = Arc::new(MockRefreshTokenRepository::new());
 
-        let (access_token, refresh_token) = token_service.issue_tokens(&user, refresh_token_repo).await;
+        let (access_token, refresh_token) =
+            token_service.issue_tokens(&user, refresh_token_repo).await;
 
         assert!(!access_token.is_empty());
         assert!(!refresh_token.is_empty());
@@ -410,7 +481,8 @@ mod tests {
             &Header::new(Algorithm::HS256),
             &claims,
             &EncodingKey::from_secret(&JWT_SECRET),
-        ).unwrap();
+        )
+        .unwrap();
 
         let validated_claims = token_service.validate_token(&token).unwrap();
 
@@ -451,8 +523,9 @@ mod tests {
             &Header::new(Algorithm::HS256),
             &claims,
             &EncodingKey::from_secret(&JWT_SECRET),
-        ).unwrap();
-        
+        )
+        .unwrap();
+
         let result = token_service.validate_token(&token);
         assert!(result.is_err());
     }
@@ -471,10 +544,11 @@ mod tests {
 
         // Test that issue_tokens returns both access and refresh tokens
         let refresh_token_repo = Arc::new(MockRefreshTokenRepository::new());
-        let (access_token, refresh_token) = token_service.issue_tokens(&user, refresh_token_repo).await;
-        
+        let (access_token, refresh_token) =
+            token_service.issue_tokens(&user, refresh_token_repo).await;
+
         assert!(!access_token.is_empty());
         assert!(!refresh_token.is_empty());
         assert_ne!(access_token, refresh_token);
     }
-} 
+}

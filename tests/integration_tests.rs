@@ -1,25 +1,31 @@
-use authentication_service::{
-    application::{services::*, handlers::*},
-    infrastructure::{InMemoryUserRepository},
-    domain::user::User
-};
-use bcrypt::{hash, DEFAULT_COST};
-use std::sync::Arc;
 use async_trait::async_trait;
-use authentication_service::infrastructure::RefreshTokenRepository;
-use std::collections::HashSet;
-use authentication_service::infrastructure::InMemoryAbacPolicyRepository;
-use authentication_service::domain::abac_policy::{AbacPolicy, AbacEffect, AbacCondition};
-use authentication_service::infrastructure::AbacPolicyRepository;
-use axum::{Router, routing::post, routing::get, routing::delete};
-use authentication_service::interface::{
-    AppState,
-    create_abac_policy_handler, list_abac_policies_handler, delete_abac_policy_handler, assign_abac_policy_handler,
-    AbacPolicyRequest, AbacConditionDto, AssignAbacPolicyRequest
+use authentication_service::application::services::{
+    AuthService, AuthZService, PasswordService, TokenService,
 };
-use authentication_service::application::services::{AuthService, TokenService, PasswordService, AuthZService};
-use authentication_service::infrastructure::{InMemoryRoleRepository, InMemoryPermissionRepository};
-use authentication_service::infrastructure::{RoleRepository, PermissionRepository, UserRepository};
+use authentication_service::domain::abac_policy::{AbacCondition, AbacEffect, AbacPolicy};
+use authentication_service::infrastructure::AbacPolicyRepository;
+use authentication_service::infrastructure::InMemoryAbacPolicyRepository;
+use authentication_service::infrastructure::RefreshTokenRepository;
+use authentication_service::infrastructure::{
+    InMemoryPermissionRepository, InMemoryRoleRepository,
+};
+use authentication_service::infrastructure::{
+    PermissionRepository, RoleRepository, UserRepository,
+};
+use authentication_service::interface::{
+    AbacConditionDto, AbacPolicyRequest, AppState, AssignAbacPolicyRequest,
+    assign_abac_policy_handler, create_abac_policy_handler, delete_abac_policy_handler,
+    list_abac_policies_handler,
+};
+use authentication_service::{
+    application::{handlers::*, services::*},
+    domain::user::User,
+    infrastructure::InMemoryUserRepository,
+};
+use axum::{Router, routing::delete, routing::get, routing::post};
+use bcrypt::{DEFAULT_COST, hash};
+use std::collections::HashSet;
+use std::sync::Arc;
 use tokio::net::TcpListener;
 
 // Mock RefreshTokenRepository for testing
@@ -29,13 +35,18 @@ struct MockRefreshTokenRepository {
 
 impl MockRefreshTokenRepository {
     fn new() -> Self {
-        Self { revoked: std::sync::Mutex::new(HashSet::new()) }
+        Self {
+            revoked: std::sync::Mutex::new(HashSet::new()),
+        }
     }
 }
 
 #[async_trait]
 impl RefreshTokenRepository for MockRefreshTokenRepository {
-    async fn insert(&self, _: authentication_service::application::services::RefreshToken) -> Result<(), sqlx::Error> {
+    async fn insert(
+        &self,
+        _: authentication_service::application::services::RefreshToken,
+    ) -> Result<(), sqlx::Error> {
         Ok(())
     }
     async fn revoke(&self, jti: &str) -> Result<(), sqlx::Error> {
@@ -53,7 +64,7 @@ async fn test_full_login_flow() {
     unsafe {
         std::env::set_var("JWT_SECRET", "test-secret-key-for-testing-only");
     }
-    
+
     // Create test user
     let password_hash = hash("password123", DEFAULT_COST).unwrap();
     let test_user = User {
@@ -94,7 +105,7 @@ async fn test_full_login_flow() {
 
     assert!(result.is_ok());
     let (access_token, refresh_token) = result.unwrap();
-    
+
     // Verify tokens are generated
     assert!(!access_token.is_empty());
     assert!(!refresh_token.is_empty());
@@ -206,7 +217,7 @@ async fn test_token_refresh_flow() {
     unsafe {
         std::env::set_var("JWT_SECRET", "test-secret-key-for-testing-only");
     }
-    
+
     // Create test user
     let password_hash = hash("password123", DEFAULT_COST).unwrap();
     let test_user = User {
@@ -224,14 +235,18 @@ async fn test_token_refresh_flow() {
     let token_service = TokenService;
 
     // Issue initial tokens
-    let (access_token1, refresh_token) = token_service.issue_tokens(&test_user, refresh_token_repo.clone()).await;
+    let (access_token1, refresh_token) = token_service
+        .issue_tokens(&test_user, refresh_token_repo.clone())
+        .await;
 
     // Refresh tokens
-    let result = token_service.refresh_tokens(&refresh_token, &test_user, refresh_token_repo).await;
+    let result = token_service
+        .refresh_tokens(&refresh_token, &test_user, refresh_token_repo)
+        .await;
     assert!(result.is_ok());
 
     let (access_token2, _) = result.unwrap();
-    
+
     // Verify new tokens are different
     assert_ne!(access_token1, access_token2);
     assert!(!access_token2.is_empty());
@@ -247,7 +262,7 @@ async fn test_logout_revokes_refresh_token() {
     unsafe {
         std::env::set_var("JWT_SECRET", "test-secret-key-for-testing-only");
     }
-    
+
     // Create test user
     let password_hash = hash("password123", DEFAULT_COST).unwrap();
     let test_user = User {
@@ -286,14 +301,16 @@ async fn test_logout_revokes_refresh_token() {
     let _ = refresh_token_repo.revoke(&claims.jti).await;
 
     // Try to use the revoked refresh token for refresh (should fail)
-    let result = token_service.refresh_tokens(&refresh_token, &test_user, refresh_token_repo.clone()).await;
+    let result = token_service
+        .refresh_tokens(&refresh_token, &test_user, refresh_token_repo.clone())
+        .await;
     assert!(result.is_err());
 }
 
 #[test]
 fn test_password_service() {
     let password_service = PasswordService;
-    
+
     // Create user with known password hash
     let user = User {
         id: "user1".to_string(),
@@ -305,7 +322,7 @@ fn test_password_service() {
 
     // Test correct password
     assert!(password_service.verify(&user, "testpassword"));
-    
+
     // Test incorrect password
     assert!(!password_service.verify(&user, "wrongpassword"));
 }
@@ -316,9 +333,9 @@ async fn test_token_validation() {
     unsafe {
         std::env::set_var("JWT_SECRET", "test-secret-key-for-testing-only");
     }
-    
+
     let token_service = TokenService;
-    
+
     // Create test user
     let user = User {
         id: "user1".to_string(),
@@ -378,7 +395,7 @@ fn test_user_domain_logic() {
     user.password_hash = password_hash;
     assert!(user.verify_password("testpassword").unwrap());
     assert!(!user.verify_password("wrongpassword").unwrap());
-} 
+}
 
 #[tokio::test]
 async fn test_abac_policy_crud_and_assignment() {
@@ -405,13 +422,19 @@ async fn test_abac_policy_crud_and_assignment() {
     assert_eq!(policies[0].id, "policy1");
 
     // Assign to user
-    abac_repo.assign_policy_to_user("user1", "policy1").await.unwrap();
+    abac_repo
+        .assign_policy_to_user("user1", "policy1")
+        .await
+        .unwrap();
     let user_policies = abac_repo.get_policies_for_user("user1").await.unwrap();
     assert_eq!(user_policies.len(), 1);
     assert_eq!(user_policies[0].id, "policy1");
 
     // Assign to role
-    abac_repo.assign_policy_to_role("role1", "policy1").await.unwrap();
+    abac_repo
+        .assign_policy_to_role("role1", "policy1")
+        .await
+        .unwrap();
     let role_policies = abac_repo.get_policies_for_role("role1").await.unwrap();
     assert_eq!(role_policies.len(), 1);
     assert_eq!(role_policies[0].id, "policy1");
@@ -424,13 +447,16 @@ async fn test_abac_policy_crud_and_assignment() {
     assert!(user_policies.is_empty());
     let role_policies = abac_repo.get_policies_for_role("role1").await.unwrap();
     assert!(role_policies.is_empty());
-} 
+}
 
 fn test_abac_router(state: AppState) -> Router {
     Router::new()
         .route("/iam/abac/policies", post(create_abac_policy_handler))
         .route("/iam/abac/policies", get(list_abac_policies_handler))
-        .route("/iam/abac/policies/{policy_id}", delete(delete_abac_policy_handler))
+        .route(
+            "/iam/abac/policies/{policy_id}",
+            delete(delete_abac_policy_handler),
+        )
         .route("/iam/abac/assign", post(assign_abac_policy_handler))
         .with_state(state)
 }
@@ -452,12 +478,16 @@ async fn test_abac_policy_http_endpoints() {
     let rbac_manage_perm = perm_repo.create_permission("rbac:manage").await.unwrap();
     let admin_role = role_repo.create_role("admin").await;
     role_repo.assign_role(&user_id, &admin_role.id).await;
-    perm_repo.assign_permission(&admin_role.id, &rbac_manage_perm.id).await.unwrap();
-    
+    perm_repo
+        .assign_permission(&admin_role.id, &rbac_manage_perm.id)
+        .await
+        .unwrap();
+
     let abac_repo = Arc::new(InMemoryAbacPolicyRepository::new()) as Arc<dyn AbacPolicyRepository>;
     let role_repo = Arc::new(role_repo) as Arc<dyn RoleRepository>;
     let perm_repo = Arc::new(perm_repo) as Arc<dyn PermissionRepository>;
-    let user_repo = Arc::new(InMemoryUserRepository::new(vec![user.clone()])) as Arc<dyn UserRepository>;
+    let user_repo =
+        Arc::new(InMemoryUserRepository::new(vec![user.clone()])) as Arc<dyn UserRepository>;
     let authz_service = Arc::new(AuthZService {
         role_repo: role_repo.clone(),
         permission_repo: perm_repo.clone(),
@@ -479,7 +509,9 @@ async fn test_abac_policy_http_endpoints() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
-        axum::serve(listener, app.into_make_service()).await.unwrap();
+        axum::serve(listener, app.into_make_service())
+            .await
+            .unwrap();
     });
     let client = reqwest::Client::new();
     // Helper: set x-user-id header
@@ -494,17 +526,23 @@ async fn test_abac_policy_http_endpoints() {
             value: "finance".to_string(),
         }],
     };
-    let resp = client.post(&format!("http://{}/iam/abac/policies", addr))
+    let resp = client
+        .post(&format!("http://{}/iam/abac/policies", addr))
         .header(user_header.0, user_header.1)
         .json(&req)
-        .send().await.unwrap();
+        .send()
+        .await
+        .unwrap();
     assert_eq!(resp.status(), 201);
     let policy: serde_json::Value = resp.json().await.unwrap();
     let policy_id = policy["id"].as_str().unwrap();
     // List policies
-    let resp = client.get(&format!("http://{}/iam/abac/policies", addr))
+    let resp = client
+        .get(&format!("http://{}/iam/abac/policies", addr))
         .header(user_header.0, user_header.1)
-        .send().await.unwrap();
+        .send()
+        .await
+        .unwrap();
     assert_eq!(resp.status(), 200);
     let list: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(list["policies"].as_array().unwrap().len(), 1);
@@ -514,19 +552,28 @@ async fn test_abac_policy_http_endpoints() {
         target_id: user_id.clone(),
         policy_id: policy_id.to_string(),
     };
-    let resp = client.post(&format!("http://{}/iam/abac/assign", addr))
+    let resp = client
+        .post(&format!("http://{}/iam/abac/assign", addr))
         .header(user_header.0, user_header.1)
         .json(&assign_req)
-        .send().await.unwrap();
+        .send()
+        .await
+        .unwrap();
     assert_eq!(resp.status(), 200);
     // Delete policy
-    let resp = client.delete(&format!("http://{}/iam/abac/policies/{}", addr, policy_id))
+    let resp = client
+        .delete(&format!("http://{}/iam/abac/policies/{}", addr, policy_id))
         .header(user_header.0, user_header.1)
-        .send().await.unwrap();
+        .send()
+        .await
+        .unwrap();
     assert_eq!(resp.status(), 204);
     // Permission enforcement: no x-user-id
-    let resp = client.post(&format!("http://{}/iam/abac/policies", addr))
+    let resp = client
+        .post(&format!("http://{}/iam/abac/policies", addr))
         .json(&req)
-        .send().await.unwrap();
+        .send()
+        .await
+        .unwrap();
     assert_eq!(resp.status(), 401);
-} 
+}

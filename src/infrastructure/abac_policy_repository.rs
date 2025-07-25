@@ -1,6 +1,6 @@
-use crate::domain::abac_policy::AbacPolicy;
 use super::AbacPolicyRepository;
 use super::RepoResult;
+use crate::domain::abac_policy::AbacPolicy;
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -10,7 +10,6 @@ pub struct InMemoryAbacPolicyRepository {
     pub user_policies: Mutex<HashMap<String, Vec<String>>>, // user_id -> policy_ids
     pub role_policies: Mutex<HashMap<String, Vec<String>>>, // role_id -> policy_ids
 }
-
 
 impl InMemoryAbacPolicyRepository {
     pub fn new() -> Self {
@@ -77,12 +76,18 @@ impl AbacPolicyRepository for InMemoryAbacPolicyRepository {
         let user_policies = self.user_policies.lock().unwrap();
         let policies = self.policies.lock().unwrap();
         let ids = user_policies.get(user_id).cloned().unwrap_or_default();
-        Ok(ids.into_iter().filter_map(|id| policies.get(&id).cloned()).collect())
+        Ok(ids
+            .into_iter()
+            .filter_map(|id| policies.get(&id).cloned())
+            .collect())
     }
     async fn get_policies_for_role(&self, role_id: &str) -> RepoResult<Vec<AbacPolicy>> {
         let role_policies = self.role_policies.lock().unwrap();
         let policies = self.policies.lock().unwrap();
         let ids = role_policies.get(role_id).cloned().unwrap_or_default();
-        Ok(ids.into_iter().filter_map(|id| policies.get(&id).cloned()).collect())
+        Ok(ids
+            .into_iter()
+            .filter_map(|id| policies.get(&id).cloned())
+            .collect())
     }
-} 
+}

@@ -34,7 +34,7 @@ impl Token {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::{Utc, Duration};
+    use chrono::{Duration, Utc};
 
     fn access_token(expires_in_secs: i64) -> Token {
         Token {
@@ -71,4 +71,4 @@ mod tests {
         assert!(!t.is_access());
         assert!(t.is_refresh());
     }
-} 
+}

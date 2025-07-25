@@ -1,8 +1,8 @@
+use crate::domain::permission::Permission;
+use crate::infrastructure::PermissionRepository;
 use async_trait::async_trait;
 use sqlx::PgPool;
-use crate::domain::permission::Permission;
 use tracing::{error, instrument};
-use crate::infrastructure::PermissionRepository;
 
 pub type RepoResult<T> = Result<T, sqlx::Error>;
 
@@ -23,7 +23,7 @@ impl PermissionRepository for PostgresPermissionRepository {
     async fn create_permission(&self, name: &str) -> RepoResult<Permission> {
         let id = uuid::Uuid::new_v4().to_string();
         let rec = sqlx::query_as::<_, Permission>(
-            "INSERT INTO permissions (id, name) VALUES ($1, $2) RETURNING id, name"
+            "INSERT INTO permissions (id, name) VALUES ($1, $2) RETURNING id, name",
         )
         .bind(&id)
         .bind(name)
@@ -93,7 +93,7 @@ impl PermissionRepository for PostgresPermissionRepository {
     #[instrument]
     async fn role_has_permission(&self, role_id: &str, permission_id: &str) -> RepoResult<bool> {
         let found: Option<i64> = sqlx::query_scalar(
-            "SELECT 1 FROM role_permissions WHERE role_id = $1 AND permission_id = $2"
+            "SELECT 1 FROM role_permissions WHERE role_id = $1 AND permission_id = $2",
         )
         .bind(role_id)
         .bind(permission_id)
@@ -101,4 +101,4 @@ impl PermissionRepository for PostgresPermissionRepository {
         .await?;
         Ok(found.is_some())
     }
-} 
+}

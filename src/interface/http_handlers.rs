@@ -1,8 +1,15 @@
-use axum::{extract::State, Json, response::IntoResponse};
-use crate::interface::*;
 use crate::interface::app_state::AppState;
-use tracing::{info, error};
-use axum::{extract::FromRequestParts, http::request::Parts, http::{Request, StatusCode}, middleware::Next, response::Response, body::Body};
+use crate::interface::*;
+use axum::{Json, extract::State, response::IntoResponse};
+use axum::{
+    body::Body,
+    extract::FromRequestParts,
+    http::request::Parts,
+    http::{Request, StatusCode},
+    middleware::Next,
+    response::Response,
+};
+use tracing::{error, info};
 
 pub struct RequirePermission {
     pub user_id: String,
@@ -14,7 +21,9 @@ where
 {
     type Rejection = (axum::http::StatusCode, &'static str);
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        let user_id = parts.headers.get("x-user-id")
+        let user_id = parts
+            .headers
+            .get("x-user-id")
             .and_then(|v| v.to_str().ok())
             .map(|s| s.to_string())
             .ok_or((axum::http::StatusCode::UNAUTHORIZED, "Missing user id"))?;
@@ -32,11 +41,15 @@ where
 {
     type Rejection = (StatusCode, &'static str);
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        let auth_header = parts.headers.get("authorization")
+        let auth_header = parts
+            .headers
+            .get("authorization")
             .and_then(|v| v.to_str().ok())
             .ok_or((StatusCode::UNAUTHORIZED, "Missing Authorization header"))?;
         // Expect "Bearer <token>"
-        let _token = auth_header.strip_prefix("Bearer ").ok_or((StatusCode::UNAUTHORIZED, "Invalid Authorization header"))?;
+        let _token = auth_header
+            .strip_prefix("Bearer ")
+            .ok_or((StatusCode::UNAUTHORIZED, "Invalid Authorization header"))?;
         // Validate JWT using TokenService from state (requires downcasting state to AppState)
         // For demo, just accept any token and set user_id to "demo_user"
         // In real code, extract AppState and call state.token_service.validate_token(token)
@@ -45,11 +58,10 @@ where
     }
 }
 
-pub async fn jwt_auth_middleware(
-    req: Request<Body>,
-    next: Next,
-) -> Result<Response, StatusCode> {
-    let auth_header = req.headers().get("authorization")
+pub async fn jwt_auth_middleware(req: Request<Body>, next: Next) -> Result<Response, StatusCode> {
+    let auth_header = req
+        .headers()
+        .get("authorization")
         .and_then(|v| v.to_str().ok());
     if let Some(auth_header) = auth_header {
         if auth_header.starts_with("Bearer ") {
@@ -83,7 +95,8 @@ pub async fn login_handler(
         email: payload.email.clone(),
         password: payload.password,
     };
-    let result = state.handler
+    let result = state
+        .handler
         .handle(
             cmd,
             &state.auth_service,
@@ -96,11 +109,19 @@ pub async fn login_handler(
     match result {
         Ok((access_token, refresh_token)) => {
             info!(email = %payload.email, event = "login_success");
-            Json(LoginResponse { access_token, refresh_token }).into_response()
+            Json(LoginResponse {
+                access_token,
+                refresh_token,
+            })
+            .into_response()
         }
         Err(e) => {
             error!(email = %payload.email, error = ?e, event = "login_error");
-            (axum::http::StatusCode::UNAUTHORIZED, format!("Login failed: {e:?}")).into_response()
+            (
+                axum::http::StatusCode::UNAUTHORIZED,
+                format!("Login failed: {e:?}"),
+            )
+                .into_response()
         }
     }
 }
@@ -127,12 +148,14 @@ pub async fn validate_token_handler(
             valid: true,
             user_id: claims.sub,
             roles: claims.roles,
-        }).into_response(),
+        })
+        .into_response(),
         Err(_) => Json(ValidateTokenResponse {
             valid: false,
             user_id: String::new(),
             roles: Vec::new(),
-        }).into_response(),
+        })
+        .into_response(),
     }
 }
 
@@ -156,19 +179,37 @@ pub async fn refresh_token_handler(
     match result {
         Ok(claims) => {
             let user_id = claims.sub;
-            let user = state.user_repo
-                .find_by_email(&user_id)
-                .await;
+            let user = state.user_repo.find_by_email(&user_id).await;
             if let Some(user) = user {
-                match state.token_service.refresh_tokens(&payload.refresh_token, &user, state.refresh_token_repo.clone()).await {
-                    Ok((access_token, refresh_token)) => Json(RefreshTokenResponse { access_token, refresh_token }).into_response(),
-                    Err(_) => (axum::http::StatusCode::UNAUTHORIZED, "Invalid refresh token").into_response(),
+                match state
+                    .token_service
+                    .refresh_tokens(
+                        &payload.refresh_token,
+                        &user,
+                        state.refresh_token_repo.clone(),
+                    )
+                    .await
+                {
+                    Ok((access_token, refresh_token)) => Json(RefreshTokenResponse {
+                        access_token,
+                        refresh_token,
+                    })
+                    .into_response(),
+                    Err(_) => (
+                        axum::http::StatusCode::UNAUTHORIZED,
+                        "Invalid refresh token",
+                    )
+                        .into_response(),
                 }
             } else {
                 (axum::http::StatusCode::UNAUTHORIZED, "User not found").into_response()
             }
         }
-        Err(_) => (axum::http::StatusCode::UNAUTHORIZED, "Invalid refresh token").into_response(),
+        Err(_) => (
+            axum::http::StatusCode::UNAUTHORIZED,
+            "Invalid refresh token",
+        )
+            .into_response(),
     }
 }
 
@@ -194,13 +235,17 @@ pub async fn logout_handler(
             let _ = state.refresh_token_repo.revoke(&claims.jti).await;
             Json(LogoutResponse { success: true }).into_response()
         }
-        Err(_) => (axum::http::StatusCode::UNAUTHORIZED, "Invalid refresh token").into_response(),
+        Err(_) => (
+            axum::http::StatusCode::UNAUTHORIZED,
+            "Invalid refresh token",
+        )
+            .into_response(),
     }
 }
 
 // --- RBAC HANDLERS ---
 
-use axum::{extract::Path};
+use axum::extract::Path;
 
 #[axum::debug_handler]
 #[utoipa::path(
@@ -220,16 +265,28 @@ pub async fn create_role_handler(
     RequirePermission { user_id }: RequirePermission,
     Json(payload): Json<CreateRoleRequest>,
 ) -> impl IntoResponse {
-    let allowed = state.authz_service.user_has_permission(&user_id, "rbac:manage", None).await.unwrap_or(false);
+    let allowed = state
+        .authz_service
+        .user_has_permission(&user_id, "rbac:manage", None)
+        .await
+        .unwrap_or(false);
     if !allowed {
-        return (axum::http::StatusCode::FORBIDDEN, "Insufficient permissions").into_response();
+        return (
+            axum::http::StatusCode::FORBIDDEN,
+            "Insufficient permissions",
+        )
+            .into_response();
     }
     let role = state.role_repo.create_role(&payload.name).await;
-    (axum::http::StatusCode::CREATED, Json(RoleResponse {
-        id: role.id,
-        name: role.name,
-        permissions: role.permissions,
-    })).into_response()
+    (
+        axum::http::StatusCode::CREATED,
+        Json(RoleResponse {
+            id: role.id,
+            name: role.name,
+            permissions: role.permissions,
+        }),
+    )
+        .into_response()
 }
 
 #[axum::debug_handler]
@@ -242,15 +299,16 @@ pub async fn create_role_handler(
     tags = ["RBAC"],
     description = "List all roles."
 )]
-pub async fn list_roles_handler(
-    State(state): State<AppState>,
-) -> impl IntoResponse {
+pub async fn list_roles_handler(State(state): State<AppState>) -> impl IntoResponse {
     let roles = state.role_repo.list_roles().await;
-    let roles = roles.into_iter().map(|role| RoleResponse {
-        id: role.id,
-        name: role.name,
-        permissions: role.permissions,
-    }).collect();
+    let roles = roles
+        .into_iter()
+        .map(|role| RoleResponse {
+            id: role.id,
+            name: role.name,
+            permissions: role.permissions,
+        })
+        .collect();
     Json(RolesListResponse { roles }).into_response()
 }
 
@@ -270,9 +328,17 @@ pub async fn delete_role_handler(
     RequirePermission { user_id }: RequirePermission,
     Path(role_id): Path<String>,
 ) -> impl IntoResponse {
-    let allowed = state.authz_service.user_has_permission(&user_id, "rbac:manage", None).await.unwrap_or(false);
+    let allowed = state
+        .authz_service
+        .user_has_permission(&user_id, "rbac:manage", None)
+        .await
+        .unwrap_or(false);
     if !allowed {
-        return (axum::http::StatusCode::FORBIDDEN, "Insufficient permissions").into_response();
+        return (
+            axum::http::StatusCode::FORBIDDEN,
+            "Insufficient permissions",
+        )
+            .into_response();
     }
     state.role_repo.delete_role(&role_id).await;
     axum::http::StatusCode::NO_CONTENT.into_response()
@@ -295,11 +361,22 @@ pub async fn assign_role_handler(
     RequirePermission { user_id }: RequirePermission,
     Json(payload): Json<AssignRoleRequest>,
 ) -> impl IntoResponse {
-    let allowed = state.authz_service.user_has_permission(&user_id, "rbac:manage", None).await.unwrap_or(false);
+    let allowed = state
+        .authz_service
+        .user_has_permission(&user_id, "rbac:manage", None)
+        .await
+        .unwrap_or(false);
     if !allowed {
-        return (axum::http::StatusCode::FORBIDDEN, "Insufficient permissions").into_response();
+        return (
+            axum::http::StatusCode::FORBIDDEN,
+            "Insufficient permissions",
+        )
+            .into_response();
     }
-    state.role_repo.assign_role(&payload.user_id, &payload.role_id).await;
+    state
+        .role_repo
+        .assign_role(&payload.user_id, &payload.role_id)
+        .await;
     axum::http::StatusCode::OK.into_response()
 }
 
@@ -320,11 +397,22 @@ pub async fn remove_role_handler(
     RequirePermission { user_id }: RequirePermission,
     Json(payload): Json<RemoveRoleRequest>,
 ) -> impl IntoResponse {
-    let allowed = state.authz_service.user_has_permission(&user_id, "rbac:manage", None).await.unwrap_or(false);
+    let allowed = state
+        .authz_service
+        .user_has_permission(&user_id, "rbac:manage", None)
+        .await
+        .unwrap_or(false);
     if !allowed {
-        return (axum::http::StatusCode::FORBIDDEN, "Insufficient permissions").into_response();
+        return (
+            axum::http::StatusCode::FORBIDDEN,
+            "Insufficient permissions",
+        )
+            .into_response();
     }
-    state.role_repo.remove_role(&payload.user_id, &payload.role_id).await;
+    state
+        .role_repo
+        .remove_role(&payload.user_id, &payload.role_id)
+        .await;
     axum::http::StatusCode::OK.into_response()
 }
 
@@ -345,15 +433,31 @@ pub async fn create_permission_handler(
     RequirePermission { user_id }: RequirePermission,
     Json(payload): Json<CreatePermissionRequest>,
 ) -> impl IntoResponse {
-    let allowed = state.authz_service.user_has_permission(&user_id, "rbac:manage", None).await.unwrap_or(false);
+    let allowed = state
+        .authz_service
+        .user_has_permission(&user_id, "rbac:manage", None)
+        .await
+        .unwrap_or(false);
     if !allowed {
-        return (axum::http::StatusCode::FORBIDDEN, "Insufficient permissions").into_response();
+        return (
+            axum::http::StatusCode::FORBIDDEN,
+            "Insufficient permissions",
+        )
+            .into_response();
     }
-    let perm = state.permission_repo.create_permission(&payload.name).await.unwrap();
-    (axum::http::StatusCode::CREATED, Json(PermissionResponse {
-        id: perm.id,
-        name: perm.name,
-    })).into_response()
+    let perm = state
+        .permission_repo
+        .create_permission(&payload.name)
+        .await
+        .unwrap();
+    (
+        axum::http::StatusCode::CREATED,
+        Json(PermissionResponse {
+            id: perm.id,
+            name: perm.name,
+        }),
+    )
+        .into_response()
 }
 
 #[axum::debug_handler]
@@ -366,11 +470,19 @@ pub async fn create_permission_handler(
     tags = ["RBAC"],
     description = "List all permissions."
 )]
-pub async fn list_permissions_handler(
-    State(state): State<AppState>,
-) -> impl IntoResponse {
-    let perms = state.permission_repo.list_permissions().await.unwrap_or_default();
-    let permissions = perms.into_iter().map(|p| PermissionResponse { id: p.id, name: p.name }).collect();
+pub async fn list_permissions_handler(State(state): State<AppState>) -> impl IntoResponse {
+    let perms = state
+        .permission_repo
+        .list_permissions()
+        .await
+        .unwrap_or_default();
+    let permissions = perms
+        .into_iter()
+        .map(|p| PermissionResponse {
+            id: p.id,
+            name: p.name,
+        })
+        .collect();
     Json(PermissionsListResponse { permissions }).into_response()
 }
 
@@ -390,11 +502,23 @@ pub async fn delete_permission_handler(
     RequirePermission { user_id }: RequirePermission,
     Path(permission_id): Path<String>,
 ) -> impl IntoResponse {
-    let allowed = state.authz_service.user_has_permission(&user_id, "rbac:manage", None).await.unwrap_or(false);
+    let allowed = state
+        .authz_service
+        .user_has_permission(&user_id, "rbac:manage", None)
+        .await
+        .unwrap_or(false);
     if !allowed {
-        return (axum::http::StatusCode::FORBIDDEN, "Insufficient permissions").into_response();
+        return (
+            axum::http::StatusCode::FORBIDDEN,
+            "Insufficient permissions",
+        )
+            .into_response();
     }
-    state.permission_repo.delete_permission(&permission_id).await.unwrap();
+    state
+        .permission_repo
+        .delete_permission(&permission_id)
+        .await
+        .unwrap();
     axum::http::StatusCode::NO_CONTENT.into_response()
 }
 
@@ -415,11 +539,23 @@ pub async fn assign_permission_handler(
     RequirePermission { user_id }: RequirePermission,
     Json(payload): Json<AssignPermissionRequest>,
 ) -> impl IntoResponse {
-    let allowed = state.authz_service.user_has_permission(&user_id, "rbac:manage", None).await.unwrap_or(false);
+    let allowed = state
+        .authz_service
+        .user_has_permission(&user_id, "rbac:manage", None)
+        .await
+        .unwrap_or(false);
     if !allowed {
-        return (axum::http::StatusCode::FORBIDDEN, "Insufficient permissions").into_response();
+        return (
+            axum::http::StatusCode::FORBIDDEN,
+            "Insufficient permissions",
+        )
+            .into_response();
     }
-    state.permission_repo.assign_permission(&payload.role_id, &payload.permission_id).await.unwrap();
+    state
+        .permission_repo
+        .assign_permission(&payload.role_id, &payload.permission_id)
+        .await
+        .unwrap();
     axum::http::StatusCode::OK.into_response()
 }
 
@@ -440,11 +576,23 @@ pub async fn remove_permission_handler(
     RequirePermission { user_id }: RequirePermission,
     Json(payload): Json<RemovePermissionRequest>,
 ) -> impl IntoResponse {
-    let allowed = state.authz_service.user_has_permission(&user_id, "rbac:manage", None).await.unwrap_or(false);
+    let allowed = state
+        .authz_service
+        .user_has_permission(&user_id, "rbac:manage", None)
+        .await
+        .unwrap_or(false);
     if !allowed {
-        return (axum::http::StatusCode::FORBIDDEN, "Insufficient permissions").into_response();
+        return (
+            axum::http::StatusCode::FORBIDDEN,
+            "Insufficient permissions",
+        )
+            .into_response();
     }
-    state.permission_repo.remove_permission(&payload.role_id, &payload.permission_id).await.unwrap();
+    state
+        .permission_repo
+        .remove_permission(&payload.role_id, &payload.permission_id)
+        .await
+        .unwrap();
     axum::http::StatusCode::OK.into_response()
 }
 
@@ -467,9 +615,17 @@ pub async fn create_abac_policy_handler(
     RequirePermission { user_id }: RequirePermission,
     Json(payload): Json<AbacPolicyRequest>,
 ) -> impl IntoResponse {
-    let allowed = state.authz_service.user_has_permission(&user_id, "rbac:manage", None).await.unwrap_or(false);
+    let allowed = state
+        .authz_service
+        .user_has_permission(&user_id, "rbac:manage", None)
+        .await
+        .unwrap_or(false);
     if !allowed {
-        return (axum::http::StatusCode::FORBIDDEN, "Insufficient permissions").into_response();
+        return (
+            axum::http::StatusCode::FORBIDDEN,
+            "Insufficient permissions",
+        )
+            .into_response();
     }
     let id = uuid::Uuid::new_v4().to_string();
     let effect = match payload.effect.as_str() {
@@ -477,11 +633,15 @@ pub async fn create_abac_policy_handler(
         "Deny" => crate::domain::abac_policy::AbacEffect::Deny,
         _ => return (axum::http::StatusCode::BAD_REQUEST, "Invalid effect").into_response(),
     };
-    let conditions = payload.conditions.into_iter().map(|c| crate::domain::abac_policy::AbacCondition {
-        attribute: c.attribute,
-        operator: c.operator,
-        value: c.value,
-    }).collect();
+    let conditions = payload
+        .conditions
+        .into_iter()
+        .map(|c| crate::domain::abac_policy::AbacCondition {
+            attribute: c.attribute,
+            operator: c.operator,
+            value: c.value,
+        })
+        .collect();
     let policy = crate::domain::abac_policy::AbacPolicy {
         id: id.clone(),
         name: payload.name,
@@ -492,8 +652,19 @@ pub async fn create_abac_policy_handler(
     let resp = AbacPolicyResponse {
         id: created.id,
         name: created.name,
-        effect: match created.effect { crate::domain::abac_policy::AbacEffect::Allow => "Allow".to_string(), crate::domain::abac_policy::AbacEffect::Deny => "Deny".to_string() },
-        conditions: created.conditions.into_iter().map(|c| AbacConditionDto { attribute: c.attribute, operator: c.operator, value: c.value }).collect(),
+        effect: match created.effect {
+            crate::domain::abac_policy::AbacEffect::Allow => "Allow".to_string(),
+            crate::domain::abac_policy::AbacEffect::Deny => "Deny".to_string(),
+        },
+        conditions: created
+            .conditions
+            .into_iter()
+            .map(|c| AbacConditionDto {
+                attribute: c.attribute,
+                operator: c.operator,
+                value: c.value,
+            })
+            .collect(),
     };
     (axum::http::StatusCode::CREATED, Json(resp)).into_response()
 }
@@ -512,18 +683,44 @@ pub async fn list_abac_policies_handler(
     State(state): State<AppState>,
     RequirePermission { user_id }: RequirePermission,
 ) -> impl IntoResponse {
-    let allowed = state.authz_service.user_has_permission(&user_id, "rbac:manage", None).await.unwrap_or(false);
+    let allowed = state
+        .authz_service
+        .user_has_permission(&user_id, "rbac:manage", None)
+        .await
+        .unwrap_or(false);
     if !allowed {
-        return (axum::http::StatusCode::FORBIDDEN, "Insufficient permissions").into_response();
+        return (
+            axum::http::StatusCode::FORBIDDEN,
+            "Insufficient permissions",
+        )
+            .into_response();
     }
-    let policies = state.abac_policy_repo.list_policies().await.unwrap_or_default();
+    let policies = state
+        .abac_policy_repo
+        .list_policies()
+        .await
+        .unwrap_or_default();
     let resp = AbacPolicyListResponse {
-        policies: policies.into_iter().map(|p| AbacPolicyResponse {
-            id: p.id,
-            name: p.name,
-            effect: match p.effect { crate::domain::abac_policy::AbacEffect::Allow => "Allow".to_string(), crate::domain::abac_policy::AbacEffect::Deny => "Deny".to_string() },
-            conditions: p.conditions.into_iter().map(|c| AbacConditionDto { attribute: c.attribute, operator: c.operator, value: c.value }).collect(),
-        }).collect(),
+        policies: policies
+            .into_iter()
+            .map(|p| AbacPolicyResponse {
+                id: p.id,
+                name: p.name,
+                effect: match p.effect {
+                    crate::domain::abac_policy::AbacEffect::Allow => "Allow".to_string(),
+                    crate::domain::abac_policy::AbacEffect::Deny => "Deny".to_string(),
+                },
+                conditions: p
+                    .conditions
+                    .into_iter()
+                    .map(|c| AbacConditionDto {
+                        attribute: c.attribute,
+                        operator: c.operator,
+                        value: c.value,
+                    })
+                    .collect(),
+            })
+            .collect(),
     };
     Json(resp).into_response()
 }
@@ -544,11 +741,23 @@ pub async fn delete_abac_policy_handler(
     RequirePermission { user_id }: RequirePermission,
     Path(policy_id): Path<String>,
 ) -> impl IntoResponse {
-    let allowed = state.authz_service.user_has_permission(&user_id, "rbac:manage", None).await.unwrap_or(false);
+    let allowed = state
+        .authz_service
+        .user_has_permission(&user_id, "rbac:manage", None)
+        .await
+        .unwrap_or(false);
     if !allowed {
-        return (axum::http::StatusCode::FORBIDDEN, "Insufficient permissions").into_response();
+        return (
+            axum::http::StatusCode::FORBIDDEN,
+            "Insufficient permissions",
+        )
+            .into_response();
     }
-    state.abac_policy_repo.delete_policy(&policy_id).await.unwrap();
+    state
+        .abac_policy_repo
+        .delete_policy(&policy_id)
+        .await
+        .unwrap();
     axum::http::StatusCode::NO_CONTENT.into_response()
 }
 
@@ -569,17 +778,39 @@ pub async fn assign_abac_policy_handler(
     RequirePermission { user_id }: RequirePermission,
     Json(payload): Json<AssignAbacPolicyRequest>,
 ) -> impl IntoResponse {
-    let allowed = state.authz_service.user_has_permission(&user_id, "rbac:manage", None).await.unwrap_or(false);
+    let allowed = state
+        .authz_service
+        .user_has_permission(&user_id, "rbac:manage", None)
+        .await
+        .unwrap_or(false);
     if !allowed {
-        return (axum::http::StatusCode::FORBIDDEN, "Insufficient permissions").into_response();
+        return (
+            axum::http::StatusCode::FORBIDDEN,
+            "Insufficient permissions",
+        )
+            .into_response();
     }
     let result = match payload.target_type.as_str() {
-        "user" => state.abac_policy_repo.assign_policy_to_user(&payload.target_id, &payload.policy_id).await,
-        "role" => state.abac_policy_repo.assign_policy_to_role(&payload.target_id, &payload.policy_id).await,
+        "user" => {
+            state
+                .abac_policy_repo
+                .assign_policy_to_user(&payload.target_id, &payload.policy_id)
+                .await
+        }
+        "role" => {
+            state
+                .abac_policy_repo
+                .assign_policy_to_role(&payload.target_id, &payload.policy_id)
+                .await
+        }
         _ => return (axum::http::StatusCode::BAD_REQUEST, "Invalid target_type").into_response(),
     };
     match result {
         Ok(_) => axum::http::StatusCode::OK.into_response(),
-        Err(_) => (axum::http::StatusCode::INTERNAL_SERVER_ERROR, "Assignment failed").into_response(),
+        Err(_) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "Assignment failed",
+        )
+            .into_response(),
     }
-} 
+}
