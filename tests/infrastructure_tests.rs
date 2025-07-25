@@ -36,11 +36,11 @@ async fn test_in_memory_refresh_token_repository() {
         expires_at: chrono::Utc::now().naive_utc(),
         revoked: false,
     };
-    assert_eq!(repo.is_valid("token1").await.unwrap(), false);
+    assert!(!repo.is_valid("token1").await.unwrap());
     repo.insert(token).await.unwrap();
-    assert_eq!(repo.is_valid("token1").await.unwrap(), true);
+    assert!(repo.is_valid("token1").await.unwrap());
     repo.revoke("token1").await.unwrap();
-    assert_eq!(repo.is_valid("token1").await.unwrap(), false);
+    assert!(!repo.is_valid("token1").await.unwrap());
 }
 
 #[tokio::test]

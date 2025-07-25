@@ -156,7 +156,7 @@ mod tests {
     #[test]
     fn test_user_debug() {
         let user = create_test_user();
-        let debug_str = format!("{:?}", user);
+        let debug_str = format!("{user:?}");
 
         assert!(debug_str.contains("user1"));
         assert!(debug_str.contains("test@example.com"));

@@ -258,7 +258,7 @@ fn test_user_clone_and_debug() {
     assert_eq!(user.is_locked, cloned_user.is_locked);
 
     // Test debug formatting
-    let debug_str = format!("{:?}", user);
+    let debug_str = format!("{user:?}");
     assert!(debug_str.contains("User"));
     assert!(debug_str.contains("user@example.com"));
 }
@@ -334,7 +334,7 @@ fn test_abac_policy_clone_and_debug() {
     assert_eq!(policy.conditions.len(), cloned_policy.conditions.len());
 
     // Test debug formatting
-    let debug_str = format!("{:?}", policy);
+    let debug_str = format!("{policy:?}");
     assert!(debug_str.contains("AbacPolicy"));
     assert!(debug_str.contains("admin_policy"));
 }

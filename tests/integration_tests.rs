@@ -527,7 +527,7 @@ async fn test_abac_policy_http_endpoints() {
         }],
     };
     let resp = client
-        .post(&format!("http://{}/iam/abac/policies", addr))
+        .post(format!("http://{addr}/iam/abac/policies"))
         .header(user_header.0, user_header.1)
         .json(&req)
         .send()
@@ -538,7 +538,7 @@ async fn test_abac_policy_http_endpoints() {
     let policy_id = policy["id"].as_str().unwrap();
     // List policies
     let resp = client
-        .get(&format!("http://{}/iam/abac/policies", addr))
+        .get(format!("http://{addr}/iam/abac/policies"))
         .header(user_header.0, user_header.1)
         .send()
         .await
@@ -553,7 +553,7 @@ async fn test_abac_policy_http_endpoints() {
         policy_id: policy_id.to_string(),
     };
     let resp = client
-        .post(&format!("http://{}/iam/abac/assign", addr))
+        .post(format!("http://{addr}/iam/abac/assign"))
         .header(user_header.0, user_header.1)
         .json(&assign_req)
         .send()
@@ -562,7 +562,7 @@ async fn test_abac_policy_http_endpoints() {
     assert_eq!(resp.status(), 200);
     // Delete policy
     let resp = client
-        .delete(&format!("http://{}/iam/abac/policies/{}", addr, policy_id))
+        .delete(format!("http://{addr}/iam/abac/policies/{policy_id}"))
         .header(user_header.0, user_header.1)
         .send()
         .await
@@ -570,7 +570,7 @@ async fn test_abac_policy_http_endpoints() {
     assert_eq!(resp.status(), 204);
     // Permission enforcement: no x-user-id
     let resp = client
-        .post(&format!("http://{}/iam/abac/policies", addr))
+        .post(format!("http://{addr}/iam/abac/policies"))
         .json(&req)
         .send()
         .await

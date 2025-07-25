@@ -32,7 +32,7 @@ async fn test_database_connectivity() {
         .map(|row| row.get::<String, _>("table_name"))
         .collect();
 
-    println!("Available tables: {:?}", table_names);
+    println!("Available tables: {table_names:?}");
 
     // Check for required tables
     assert!(
@@ -65,13 +65,13 @@ async fn test_database_connectivity() {
         .fetch_one(&pool)
         .await
         .unwrap();
-    println!("User count: {}", user_count);
+    println!("User count: {user_count}");
 
     let role_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM roles")
         .fetch_one(&pool)
         .await
         .unwrap();
-    println!("Role count: {}", role_count);
+    println!("Role count: {role_count}");
 
     // Verify seed data from migration 003_seed_test_data.sql
     let test_user = sqlx::query("SELECT email FROM users WHERE id = 'user-1'")
