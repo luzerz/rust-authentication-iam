@@ -313,9 +313,7 @@ jobs:
           psql $DATABASE_URL -c "SELECT COUNT(*) FROM permissions;" || echo "Failed to query permissions"
       - name: Run tests with coverage for SonarCloud
         run: |
-          cargo tarpaulin --out Xml --all --release
-          mkdir -p target/sonar
-          cp tarpaulin-report.xml target/sonar/cobertura.xml
+          cargo tarpaulin --out Xml --all --release --output-dir target/sonar
       - name: SonarCloud Scan
         uses: SonarSource/sonarcloud-github-action@master
         env:
