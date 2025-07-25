@@ -1,3 +1,4 @@
+[![CI/CD](https://github.com/luzerz/rust-authentication-iam/actions/workflows/ci.yml/badge.svg)](https://github.com/luzerz/rust-authentication-iam/actions/workflows/ci.yml)
 # Authentication Service (IAM)
 
 A robust, production-grade Identity and Access Management (IAM) service written in Rust. Implements authentication, RBAC, and ABAC with JWT, OpenAPI docs, and high test coverage.
