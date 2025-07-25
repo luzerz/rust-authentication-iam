@@ -84,6 +84,17 @@ All endpoints are under `/v1/iam/...` (e.g., `/v1/iam/login`).
 - ABAC: Define policies with conditions, assign to users/roles
 - All permission checks go through `AuthZService`
 
+## CI/CD
+
+This project is set up for CI/CD using GitHub Actions (or your preferred CI system).
+
+Typical pipeline steps:
+- **Build:** Ensure the project compiles on all supported platforms.
+- **Test:** Run all unit, integration, and E2E tests (90%+ coverage required).
+- **Lint/Format:** Enforce Rust formatting and linting (`cargo fmt`, `cargo clippy`).
+- **Coverage:** Check code coverage and fail if below threshold.
+
+A sample workflow is provided in `.github/workflows/ci.yml` (add or customize as needed).
 
 ## Project Tasks
 
