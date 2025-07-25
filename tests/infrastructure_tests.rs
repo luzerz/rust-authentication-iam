@@ -91,15 +91,8 @@ async fn test_postgres_permission_repository() {
 
     let pool = PgPool::connect(&database_url.unwrap()).await.unwrap();
 
-    // Clean up any existing test data
-    sqlx::query("DELETE FROM role_permissions WHERE permission_id LIKE 'test_%'")
-        .execute(&pool)
-        .await
-        .ok();
-    sqlx::query("DELETE FROM permissions WHERE id LIKE 'test_%'")
-        .execute(&pool)
-        .await
-        .ok();
+    // No cleanup at the beginning - let each test clean up its own data at the end
+    // This prevents interference between tests
 
     let repo = PostgresPermissionRepository::new(pool.clone());
 
@@ -218,15 +211,8 @@ async fn test_postgres_user_repository() {
 
     let pool = PgPool::connect(&database_url.unwrap()).await.unwrap();
 
-    // Clean up any existing test data
-    sqlx::query("DELETE FROM user_roles WHERE user_id LIKE 'test_%'")
-        .execute(&pool)
-        .await
-        .ok();
-    sqlx::query("DELETE FROM users WHERE id LIKE 'test_%'")
-        .execute(&pool)
-        .await
-        .ok();
+    // No cleanup at the beginning - let each test clean up its own data at the end
+    // This prevents interference between tests
 
     let repo = PostgresUserRepository::new(pool.clone());
 
@@ -257,12 +243,14 @@ async fn test_postgres_user_repository() {
     assert_eq!(found_user.password_hash, password_hash);
     assert!(!found_user.is_locked);
 
-    // Clean up
-    sqlx::query("DELETE FROM user_roles WHERE user_id LIKE 'test_%'")
+    // Clean up - only clean up what this test created
+    sqlx::query("DELETE FROM user_roles WHERE user_id = $1")
+        .bind(user_id)
         .execute(&pool)
         .await
         .ok();
-    sqlx::query("DELETE FROM users WHERE id LIKE 'test_%'")
+    sqlx::query("DELETE FROM users WHERE id = $1")
+        .bind(user_id)
         .execute(&pool)
         .await
         .ok();
@@ -279,19 +267,8 @@ async fn test_postgres_user_repository_with_roles() {
 
     let pool = PgPool::connect(&database_url.unwrap()).await.unwrap();
 
-    // Clean up any existing test data
-    sqlx::query("DELETE FROM user_roles WHERE user_id LIKE 'test_%' OR role_id LIKE 'test_%'")
-        .execute(&pool)
-        .await
-        .ok();
-    sqlx::query("DELETE FROM users WHERE id LIKE 'test_%'")
-        .execute(&pool)
-        .await
-        .ok();
-    sqlx::query("DELETE FROM roles WHERE id LIKE 'test_%'")
-        .execute(&pool)
-        .await
-        .ok();
+    // No cleanup at the beginning - let each test clean up its own data at the end
+    // This prevents interference between tests
 
     let repo = PostgresUserRepository::new(pool.clone());
 

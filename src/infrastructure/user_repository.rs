@@ -63,19 +63,22 @@ impl UserRepository for PostgresUserRepository {
         .await
         .ok()??;
         // Load roles
-        let roles: Vec<String> = sqlx::query_as::<_, RoleRow>(
+        let roles_result = sqlx::query_as::<_, RoleRow>(
             "SELECT r.name FROM roles r \
              INNER JOIN user_roles ur ON ur.role_id = r.id \
              WHERE ur.user_id = $1",
         )
         .bind(&row.id)
         .fetch_all(&self.pool)
-        .await
-        .ok()
-        .unwrap_or_default()
-        .into_iter()
-        .map(|r| r.name)
-        .collect();
+        .await;
+
+        let roles: Vec<String> = match roles_result {
+            Ok(role_rows) => role_rows.into_iter().map(|r| r.name).collect(),
+            Err(e) => {
+                tracing::error!("Failed to load roles for user {}: {}", row.id, e);
+                Vec::new()
+            }
+        };
         Some(User {
             id: row.id,
             email: row.email,
