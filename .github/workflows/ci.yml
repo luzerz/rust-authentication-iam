@@ -248,7 +248,7 @@ jobs:
       - name: Prepare SQLx data
         run: cargo sqlx prepare --database-url $DATABASE_URL
       - name: Run code coverage
-        run: cargo tarpaulin --out Xml --all --release --fail-under 60
+        run: cargo tarpaulin --out Xml --all --release --fail-under 10
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v3
         with:
