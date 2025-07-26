@@ -123,6 +123,20 @@ jobs:
   # Unit tests without database (fast)
   test-unit:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_pass
+          POSTGRES_DB: test_auth_db
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5433:5432
     steps:
       - uses: actions/checkout@v4
       - name: Set up Rust
@@ -139,6 +153,22 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Install sqlx CLI
+        run: cargo install sqlx-cli --no-default-features --features postgres
+      - name: Wait for database
+        run: |
+          until pg_isready -h localhost -p 5433 -U test_user -d test_auth_db; do
+            echo "Waiting for database..."
+            sleep 2
+          done
+      - name: Run migrations
+        run: sqlx migrate run --database-url $DATABASE_URL
+      - name: Prepare SQLx data
+        run: cargo sqlx prepare --database-url $DATABASE_URL
+      - name: Run database connectivity test
+        run: cargo test test_database_connectivity -- --nocapture        
       - name: Run unit tests
         run: |
           # Skip database tests by unsetting DATABASE_URL
