@@ -1,7 +1,6 @@
 use super::commands::LoginUserCommand;
 use super::services::{AuthError, AuthService, PasswordService, TokenService};
-use crate::infrastructure::RefreshTokenRepository;
-use crate::infrastructure::UserRepository;
+use crate::infrastructure::{RefreshTokenRepository, UserRepository};
 use std::sync::Arc;
 use tracing::instrument;
 
@@ -39,6 +38,7 @@ pub struct AssignRolesHandler;
 mod tests {
     use super::*;
     use crate::domain::user::User;
+    use crate::infrastructure::RepoResult;
     use async_trait::async_trait;
     use bcrypt::{DEFAULT_COST, hash};
     use std::sync::Arc;
@@ -70,6 +70,27 @@ mod tests {
     impl UserRepository for MockUserRepository {
         async fn find_by_email(&self, email: &str) -> Option<User> {
             self.users.get(email).cloned()
+        }
+
+        async fn create_user(&self, user: User) -> RepoResult<User> {
+            Ok(user)
+        }
+
+        async fn update_user(&self, _user: &User) -> RepoResult<()> {
+            Ok(())
+        }
+
+        async fn update_password(
+            &self,
+            _user_id: &str,
+            _new_password_hash: &str,
+        ) -> RepoResult<()> {
+            Ok(())
+        }
+
+        async fn find_by_id(&self, user_id: &str) -> RepoResult<Option<User>> {
+            // For simplicity, assume user_id is email in this mock
+            Ok(self.users.get(user_id).cloned())
         }
     }
 

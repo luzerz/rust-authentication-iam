@@ -129,6 +129,7 @@ fn test_role_creation_and_validation() {
         id: "role1".to_string(),
         name: "admin".to_string(),
         permissions: vec![],
+        parent_role_id: None,
     };
     assert_eq!(role.name, "admin");
     assert!(role.permissions.is_empty());
@@ -139,6 +140,7 @@ fn test_role_creation_and_validation() {
         id: "role2".to_string(),
         name: "moderator".to_string(),
         permissions: vec![],
+        parent_role_id: None,
     };
     role.add_permission("read".to_string());
     role.add_permission("write".to_string());
@@ -165,11 +167,13 @@ fn test_role_creation_and_validation() {
         id: "role1".to_string(),
         name: "admin".to_string(),
         permissions: vec![],
+        parent_role_id: None,
     };
     let role2 = Role {
         id: "role2".to_string(),
         name: "user".to_string(),
         permissions: vec![],
+        parent_role_id: None,
     };
     assert_ne!(role1.id, role2.id);
 }
@@ -195,6 +199,10 @@ fn test_abac_policy_creation_and_validation() {
         name: "admin_access".to_string(),
         effect: authentication_service::domain::abac_policy::AbacEffect::Allow,
         conditions: conditions.clone(),
+        priority: Some(1),
+        conflict_resolution: Some(
+            authentication_service::domain::abac_policy::ConflictResolutionStrategy::DenyOverrides,
+        ),
     };
     assert_eq!(policy.name, "admin_access");
     assert_eq!(policy.conditions.len(), 2);
@@ -206,6 +214,10 @@ fn test_abac_policy_creation_and_validation() {
         name: "restricted_access".to_string(),
         effect: authentication_service::domain::abac_policy::AbacEffect::Deny,
         conditions: vec![],
+        priority: Some(50),
+        conflict_resolution: Some(
+            authentication_service::domain::abac_policy::ConflictResolutionStrategy::DenyOverrides,
+        ),
     };
     assert!(policy.conditions.is_empty());
 
@@ -215,12 +227,20 @@ fn test_abac_policy_creation_and_validation() {
         name: "policy1".to_string(),
         effect: authentication_service::domain::abac_policy::AbacEffect::Allow,
         conditions: vec![],
+        priority: Some(10),
+        conflict_resolution: Some(
+            authentication_service::domain::abac_policy::ConflictResolutionStrategy::AllowOverrides,
+        ),
     };
     let policy2 = AbacPolicy {
         id: "policy2".to_string(),
         name: "policy2".to_string(),
         effect: authentication_service::domain::abac_policy::AbacEffect::Allow,
         conditions: vec![],
+        priority: Some(20),
+        conflict_resolution: Some(
+            authentication_service::domain::abac_policy::ConflictResolutionStrategy::PriorityWins,
+        ),
     };
     assert_ne!(policy1.id, policy2.id);
 }
@@ -269,6 +289,7 @@ fn test_role_clone_and_debug() {
         id: "role1".to_string(),
         name: "admin".to_string(),
         permissions: vec![],
+        parent_role_id: None,
     };
     role.add_permission("read".to_string());
     role.add_permission("write".to_string());
@@ -325,6 +346,10 @@ fn test_abac_policy_clone_and_debug() {
         name: "admin_policy".to_string(),
         effect: authentication_service::domain::abac_policy::AbacEffect::Allow,
         conditions: conditions.clone(),
+        priority: Some(50),
+        conflict_resolution: Some(
+            authentication_service::domain::abac_policy::ConflictResolutionStrategy::DenyOverrides,
+        ),
     };
 
     // Test cloning

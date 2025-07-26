@@ -1,8 +1,8 @@
 use crate::application::handlers::LoginUserHandler;
 use crate::application::services::{AuthService, AuthZService, PasswordService, TokenService};
 use crate::infrastructure::{
-    AbacPolicyRepository, PermissionRepository, RefreshTokenRepository, RoleRepository,
-    UserRepository,
+    AbacPolicyRepository, PermissionGroupRepository, PermissionRepository, RefreshTokenRepository,
+    RoleRepository, UserRepository,
 };
 use std::sync::Arc;
 
@@ -16,6 +16,7 @@ pub struct AppState {
     pub handler: Arc<LoginUserHandler>,
     pub role_repo: Arc<dyn RoleRepository>,
     pub permission_repo: Arc<dyn PermissionRepository>,
+    pub permission_group_repo: Arc<dyn PermissionGroupRepository>,
     pub abac_policy_repo: Arc<dyn AbacPolicyRepository>,
     pub authz_service: Arc<AuthZService>,
 }

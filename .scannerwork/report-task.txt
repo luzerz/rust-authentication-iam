@@ -1,7 +1,0 @@
-organization=luzerz
-projectKey=luzerz_rust-authentication-iam
-serverUrl=https://sonarcloud.io
-serverVersion=8.0.0.65718
-dashboardUrl=https://sonarcloud.io/dashboard?id=luzerz_rust-authentication-iam
-ceTaskId=AZhEAb-gDEIpL_xTrmTF
-ceTaskUrl=https://sonarcloud.io/api/ce/task?id=AZhEAb-gDEIpL_xTrmTF

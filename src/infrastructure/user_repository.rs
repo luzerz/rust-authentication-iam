@@ -1,4 +1,4 @@
-use super::UserRepository;
+use super::{RepoResult, UserRepository};
 use crate::domain::user::User;
 use async_trait::async_trait;
 use sqlx::FromRow;
@@ -22,20 +22,70 @@ struct RoleRow {
 }
 
 pub struct InMemoryUserRepository {
-    users: HashMap<String, User>, // key: email
+    users: Mutex<HashMap<String, User>>,       // key: email
+    users_by_id: Mutex<HashMap<String, User>>, // key: id
 }
 
 impl InMemoryUserRepository {
     pub fn new(users: Vec<User>) -> Self {
-        let users = users.into_iter().map(|u| (u.email.clone(), u)).collect();
-        Self { users }
+        let mut users_by_email = HashMap::new();
+        let mut users_by_id = HashMap::new();
+
+        for user in users {
+            users_by_email.insert(user.email.clone(), user.clone());
+            users_by_id.insert(user.id.clone(), user);
+        }
+
+        Self {
+            users: Mutex::new(users_by_email),
+            users_by_id: Mutex::new(users_by_id),
+        }
     }
 }
 
 #[async_trait]
 impl UserRepository for InMemoryUserRepository {
     async fn find_by_email(&self, email: &str) -> Option<User> {
-        self.users.get(email).cloned()
+        self.users.lock().unwrap().get(email).cloned()
+    }
+
+    async fn create_user(&self, user: User) -> RepoResult<User> {
+        let mut users = self.users.lock().unwrap();
+        let mut users_by_id = self.users_by_id.lock().unwrap();
+
+        users.insert(user.email.clone(), user.clone());
+        users_by_id.insert(user.id.clone(), user.clone());
+
+        Ok(user)
+    }
+
+    async fn update_user(&self, user: &User) -> RepoResult<()> {
+        let mut users = self.users.lock().unwrap();
+        let mut users_by_id = self.users_by_id.lock().unwrap();
+
+        users.insert(user.email.clone(), user.clone());
+        users_by_id.insert(user.id.clone(), user.clone());
+
+        Ok(())
+    }
+
+    async fn update_password(&self, user_id: &str, new_password_hash: &str) -> RepoResult<()> {
+        let mut users = self.users.lock().unwrap();
+        let mut users_by_id = self.users_by_id.lock().unwrap();
+
+        if let Some(user) = users_by_id.get_mut(user_id) {
+            user.password_hash = new_password_hash.to_string();
+            // Also update in the email-indexed map
+            if let Some(user_by_email) = users.get_mut(&user.email) {
+                user_by_email.password_hash = new_password_hash.to_string();
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn find_by_id(&self, user_id: &str) -> RepoResult<Option<User>> {
+        Ok(self.users_by_id.lock().unwrap().get(user_id).cloned())
     }
 }
 
@@ -86,6 +136,87 @@ impl UserRepository for PostgresUserRepository {
             roles,
             is_locked: row.is_locked,
         })
+    }
+
+    async fn create_user(&self, user: User) -> RepoResult<User> {
+        // Insert the user
+        sqlx::query!(
+            "INSERT INTO users (id, email, password_hash, is_locked) VALUES ($1, $2, $3, $4)",
+            user.id,
+            user.email,
+            user.password_hash,
+            user.is_locked
+        )
+        .execute(&self.pool)
+        .await?;
+
+        Ok(user)
+    }
+
+    async fn update_user(&self, user: &User) -> RepoResult<()> {
+        sqlx::query!(
+            "UPDATE users SET email = $1, password_hash = $2, is_locked = $3 WHERE id = $4",
+            user.email,
+            user.password_hash,
+            user.is_locked,
+            user.id
+        )
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    async fn update_password(&self, user_id: &str, new_password_hash: &str) -> RepoResult<()> {
+        sqlx::query!(
+            "UPDATE users SET password_hash = $1 WHERE id = $2",
+            new_password_hash,
+            user_id
+        )
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    async fn find_by_id(&self, user_id: &str) -> RepoResult<Option<User>> {
+        let row = sqlx::query_as::<_, UserRow>(
+            "SELECT id, email, password_hash, is_locked FROM users WHERE id = $1",
+        )
+        .bind(user_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        match row {
+            Some(row) => {
+                // Load roles
+                let roles_result = sqlx::query_as::<_, RoleRow>(
+                    "SELECT r.name FROM roles r \
+                     INNER JOIN user_roles ur ON ur.role_id = r.id \
+                     WHERE ur.user_id = $1",
+                )
+                .bind(&row.id)
+                .fetch_all(&self.pool)
+                .await;
+
+                let roles: Vec<String> = match roles_result {
+                    Ok(role_rows) => role_rows.into_iter().map(|r| r.name).collect(),
+                    Err(e) => {
+                        tracing::error!("Failed to load roles for user {}: {}", row.id, e);
+                        Vec::new()
+                    }
+                };
+
+                Ok(Some(User {
+                    id: row.id,
+                    email: row.email,
+                    password_hash: row.password_hash,
+                    roles,
+                    is_locked: row.is_locked,
+                }))
+            }
+            None => Ok(None),
+        }
     }
 }
 

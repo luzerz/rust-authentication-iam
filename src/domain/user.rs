@@ -11,6 +11,17 @@ pub struct User {
 }
 
 impl User {
+    /// Creates a new user with the given details.
+    pub fn new(id: String, email: String, password_hash: String) -> Self {
+        Self {
+            id,
+            email,
+            password_hash,
+            roles: Vec::new(),
+            is_locked: false,
+        }
+    }
+
     /// Verifies a plaintext password against the stored hash.
     pub fn verify_password(&self, password: &str) -> Result<bool, BcryptError> {
         verify(password, &self.password_hash)
