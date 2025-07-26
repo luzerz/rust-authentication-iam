@@ -1,0 +1,50 @@
+# Git
+.git
+.gitignore
+
+# Rust
+target/
+Cargo.lock
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Documentation
+README.md
+*.md
+docs/
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+
+# Docker
+Dockerfile*
+docker-compose*
+.dockerignore
+
+# Scripts
+scripts/
+
+# Test files
+tests/
+**/*_test.rs
+**/test_*.rs
+
+# Environment files
+.env*
+!.env.example
+
+# Temporary files
+*.tmp
+*.temp 

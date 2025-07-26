@@ -1,0 +1,88 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database for Development
+  postgres:
+    image: postgres:15
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: test_user
+      POSTGRES_PASSWORD: test_pass
+      POSTGRES_DB: test_auth_db
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U test_user -d test_auth_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - auth_dev_network
+
+  # Authentication Service (Development)
+  auth_service_dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgres://test_user:test_pass@postgres:5432/test_auth_db
+      - JWT_SECRET=dev-jwt-secret-key
+      - HTTP_HOST=0.0.0.0
+      - HTTP_PORT=8080
+      - RUST_LOG=debug
+    ports:
+      - "8080:8080"
+    volumes:
+      - .:/app
+      - cargo_cache:/usr/local/cargo/registry
+      - target_cache:/app/target
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - auth_dev_network
+    stdin_open: true
+    tty: true
+
+  # Redis for Session Storage (optional)
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - auth_dev_network
+    profiles:
+      - redis
+
+  # pgAdmin for Database Management (optional)
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@example.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "5050:80"
+    depends_on:
+      - postgres
+    networks:
+      - auth_dev_network
+    profiles:
+      - tools
+
+volumes:
+  postgres_dev_data:
+  cargo_cache:
+  target_cache:
+  redis_data:
+
+networks:
+  auth_dev_network:
+    driver: bridge 

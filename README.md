@@ -66,8 +66,38 @@ A comprehensive Identity and Access Management (IAM) service built with Rust, fe
    ```bash
    cargo run
    ```
+
 6. **View Swagger UI:**
    - Go to [http://localhost:8080/swagger](http://localhost:8080/swagger)
+
+### Docker Development
+
+1. **Start development environment:**
+   ```bash
+   make docker-run-dev
+   ```
+
+2. **View logs:**
+   ```bash
+   make logs-dev
+   ```
+
+3. **Access services:**
+   - API: [http://localhost:8080](http://localhost:8080)
+   - Swagger: [http://localhost:8080/swagger](http://localhost:8080/swagger)
+   - pgAdmin: [http://localhost:5050](http://localhost:5050) (admin@example.com / admin)
+
+### Production Docker
+
+1. **Deploy to production:**
+   ```bash
+   make deploy-prod
+   ```
+
+2. **With reverse proxy:**
+   ```bash
+   make docker-run-full
+   ```
 
 ## Environment Variables
 - `DATABASE_URL` - Postgres connection string
@@ -146,6 +176,34 @@ The project includes a comprehensive CI/CD pipeline with:
 - [Test Database Setup](TEST_DATABASE_SETUP.md) - Database testing guide
 - [CI/CD Setup](CI_CD_SETUP.md) - Complete pipeline documentation
 - [SonarCloud Setup](SONARCLOUD_SETUP.md) - Quality analysis setup
+
+## Docker
+
+### Available Images
+- **Production**: `Dockerfile` - Optimized multi-stage build
+- **Development**: `Dockerfile.dev` - With hot reloading
+
+### Docker Compose Files
+- **Production**: `docker-compose.prod.yml` - Full production stack
+- **Development**: `docker-compose.dev.yml` - Development environment
+
+### Quick Commands
+```bash
+# Development
+make docker-run-dev
+
+# Production
+make deploy-prod
+
+# With reverse proxy
+make docker-run-full
+
+# View logs
+make logs-dev
+
+# Stop services
+make docker-stop
+```
 
 ## Architecture
 
@@ -239,6 +297,41 @@ docker run -p 8080:8080 \
   -e DATABASE_URL=postgres://user:pass@host:5432/db \
   -e JWT_SECRET=your_secret \
   authentication-service
+```
+
+### Production Deployment
+
+```bash
+# Deploy with Docker Compose
+make deploy-prod
+
+# Deploy with reverse proxy
+make docker-run-full
+
+# View logs
+make logs
+
+# Health check
+make health-docker
+```
+
+### Environment Variables
+
+For production deployment, set these environment variables:
+
+```bash
+# Database
+DATABASE_URL=postgres://user:pass@host:5432/db
+
+# Security
+JWT_SECRET=your-super-secret-jwt-key-change-in-production
+
+# Server
+HTTP_HOST=0.0.0.0
+HTTP_PORT=8080
+
+# Logging
+RUST_LOG=info
 ```
 
 ### Completed
