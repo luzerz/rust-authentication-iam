@@ -1,4 +1,4 @@
-[![CI/CD](https://github.com/luzerz/rust-authentication-iam/actions/workflows/ci.yml/badge.svg)](https://github.com/luzerz/rust-authentication-iam/actions/workflows/ci.yml) [![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=luzerz_rust-authentication-iam&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=luzerz_rust-authentication-iam) [![Coverage](https://sonarcloud.io/api/project_badges/measure?project=luzerz_rust-authentication-iam&metric=coverage)](https://sonarcloud.io/summary/new_code?id=luzerz_rust-authentication-iam) [![Security Rating](https://sonarcloud.io/api/project_badges/measure?project=luzerz_rust-authentication-iam&metric=security_rating)](https://sonarcloud.io/summary/new_code?id=luzerz_rust-authentication-iam) [![Vulnerabilities](https://sonarcloud.io/api/project_badges/measure?project=luzerz_rust-authentication-iam&metric=vulnerabilities)](https://sonarcloud.io/summary/new_code?id=luzerz_rust-authentication-iam)
+[![CI/CD](https://github.com/luzerz/rust-authentication-iam/actions/workflows/ci.yml/badge.svg)](https://github.com/luzerz/rust-authentication-iam/actions/workflows/ci.yml) [![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=luzerz_rust-authentication-iam&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=luzerz_rust-authentication-iam) [![Security Rating](https://sonarcloud.io/api/project_badges/measure?project=luzerz_rust-authentication-iam&metric=security_rating)](https://sonarcloud.io/summary/new_code?id=luzerz_rust-authentication-iam) [![Vulnerabilities](https://sonarcloud.io/api/project_badges/measure?project=luzerz_rust-authentication-iam&metric=vulnerabilities)](https://sonarcloud.io/summary/new_code?id=luzerz_rust-authentication-iam)
 [![codecov](https://codecov.io/github/luzerz/rust-authentication-iam/graph/badge.svg?token=HVZ0LRADNK)](https://codecov.io/github/luzerz/rust-authentication-iam)
 # Authentication Service (IAM)
 
@@ -89,7 +89,7 @@ cargo clippy --all -- -D warnings
 cargo fmt --all -- --check
 
 # Unit tests (fast, no database)
-DATABASE_URL="" cargo test --lib --bins --tests --workspace
+unset DATABASE_URL cargo test --lib --bins --tests --workspace
 ```
 
 ### Integration Tests

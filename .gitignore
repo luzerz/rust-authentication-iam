@@ -3,3 +3,5 @@
 .vscode
 .specs
 .scannerwork
+.env
+.DS_Store
