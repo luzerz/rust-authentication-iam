@@ -593,7 +593,6 @@ async fn test_user_registration_flow() {
 
     // Create repositories
     let user_repo = Arc::new(InMemoryUserRepository::new(vec![]));
-    let refresh_token_repo = Arc::new(MockRefreshTokenRepository::new());
 
     // Test user registration
     let test_user = User::new(
@@ -639,8 +638,6 @@ async fn test_permission_group_flow() {
     }
 
     // Create repositories
-    let user_repo = Arc::new(InMemoryUserRepository::new(vec![]));
-    let refresh_token_repo = Arc::new(MockRefreshTokenRepository::new());
     let permission_group_repo = Arc::new(InMemoryPermissionGroupRepository::new());
 
     // Test permission group creation

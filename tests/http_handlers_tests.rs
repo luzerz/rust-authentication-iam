@@ -6,7 +6,7 @@ use authentication_service::domain::user::User;
 use authentication_service::infrastructure::{
     AbacPolicyRepository, InMemoryAbacPolicyRepository, InMemoryPermissionGroupRepository,
     InMemoryPermissionRepository, InMemoryRefreshTokenRepository, InMemoryRoleRepository,
-    InMemoryUserRepository, PermissionGroupRepository, PermissionRepository, RoleRepository,
+    InMemoryUserRepository, PermissionRepository, RoleRepository,
 };
 use authentication_service::interface::app_state::AppState;
 use authentication_service::interface::http_handlers::{
