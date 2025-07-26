@@ -87,7 +87,7 @@ async fn test_login_handler_success() {
     let state = mock_app_state();
     let app = Router::new()
         .route("/v1/iam/auth/login", axum::routing::post(login_handler))
-        .with_state(state);
+        .with_state(Arc::new(state));
     let payload = LoginRequest {
         email: "user@example.com".to_string(),
         password: "password".to_string(),
@@ -107,7 +107,7 @@ async fn test_login_handler_invalid_credentials() {
     let state = mock_app_state();
     let app = Router::new()
         .route("/v1/iam/auth/login", axum::routing::post(login_handler))
-        .with_state(state);
+        .with_state(Arc::new(state));
     let payload = LoginRequest {
         email: "user@example.com".to_string(),
         password: "wrongpassword".to_string(),
@@ -130,7 +130,7 @@ async fn test_validate_token_handler_missing_token() {
             "/v1/iam/validate-token",
             axum::routing::post(validate_token_handler),
         )
-        .with_state(state);
+        .with_state(Arc::new(state));
     let payload = ValidateTokenRequest {
         token: "".to_string(),
     };
@@ -157,7 +157,7 @@ async fn test_refresh_token_handler_invalid_token() {
             "/v1/iam/refresh-token",
             axum::routing::post(refresh_token_handler),
         )
-        .with_state(state);
+        .with_state(Arc::new(state));
     let payload = RefreshTokenRequest {
         refresh_token: "invalid".to_string(),
     };
@@ -176,7 +176,7 @@ async fn test_logout_handler_invalid_token() {
     let state = mock_app_state();
     let app = Router::new()
         .route("/v1/iam/auth/logout", axum::routing::post(logout_handler))
-        .with_state(state);
+        .with_state(Arc::new(state));
     let payload = LogoutRequest {
         refresh_token: "invalid".to_string(),
     };
@@ -193,9 +193,22 @@ async fn test_logout_handler_invalid_token() {
 #[tokio::test]
 async fn test_create_role_handler() {
     let state = mock_app_state();
+    
+    // Create a valid JWT token for testing
+    let token_service = TokenService;
+    let test_user = User {
+        id: "user1".to_string(),
+        email: "user@example.com".to_string(),
+        password_hash: "".to_string(),
+        roles: vec!["user".to_string()],
+        is_locked: false,
+    };
+    let refresh_token_repo = Arc::new(InMemoryRefreshTokenRepository::new());
+    let (access_token, _) = token_service.issue_tokens(&test_user, refresh_token_repo).await;
+    
     let app = Router::new()
         .route("/v1/iam/roles", axum::routing::post(create_role_handler))
-        .with_state(state);
+        .with_state(Arc::new(state));
     let payload = CreateRoleRequest {
         name: "test_role".to_string(),
     };
@@ -204,7 +217,7 @@ async fn test_create_role_handler() {
         .uri("/v1/iam/roles")
         .header("content-type", "application/json")
         .header("x-user-id", "user1")
-        .header("authorization", "Bearer test-token")
+        .header("authorization", format!("Bearer {}", access_token))
         .body(Body::from(serde_json::to_vec(&payload).unwrap()))
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
@@ -217,7 +230,7 @@ async fn test_list_roles_handler() {
     let state = mock_app_state();
     let app = Router::new()
         .route("/v1/iam/roles", axum::routing::get(list_roles_handler))
-        .with_state(state);
+        .with_state(Arc::new(state));
     let req = Request::builder()
         .method("GET")
         .uri("/v1/iam/roles")
@@ -235,7 +248,7 @@ async fn test_delete_role_handler() {
             "/v1/iam/roles/{role_id}",
             axum::routing::delete(delete_role_handler),
         )
-        .with_state(state);
+        .with_state(Arc::new(state));
     let req = Request::builder()
         .method("DELETE")
         .uri("/v1/iam/roles/test_role")
@@ -256,7 +269,7 @@ async fn test_assign_role_handler() {
             "/v1/iam/roles/assign",
             axum::routing::post(assign_role_handler),
         )
-        .with_state(state);
+        .with_state(Arc::new(state));
     let payload = AssignRoleRequest {
         user_id: "user1".to_string(),
         role_id: "test_role".to_string(),
@@ -282,7 +295,7 @@ async fn test_remove_role_handler() {
             "/v1/iam/roles/remove",
             axum::routing::post(remove_role_handler),
         )
-        .with_state(state);
+        .with_state(Arc::new(state));
     let payload = RemoveRoleRequest {
         user_id: "user1".to_string(),
         role_id: "test_role".to_string(),
@@ -308,7 +321,7 @@ async fn test_create_permission_handler() {
             "/v1/iam/permissions",
             axum::routing::post(create_permission_handler),
         )
-        .with_state(state);
+        .with_state(Arc::new(state));
     let payload = CreatePermissionRequest {
         name: "test_permission".to_string(),
     };
@@ -333,7 +346,7 @@ async fn test_list_permissions_handler() {
             "/v1/iam/permissions",
             axum::routing::get(list_permissions_handler),
         )
-        .with_state(state);
+        .with_state(Arc::new(state));
     let req = Request::builder()
         .method("GET")
         .uri("/v1/iam/permissions")
@@ -351,7 +364,7 @@ async fn test_delete_permission_handler() {
             "/v1/iam/permissions/{permission_id}",
             axum::routing::delete(delete_permission_handler),
         )
-        .with_state(state);
+        .with_state(Arc::new(state));
     let req = Request::builder()
         .method("DELETE")
         .uri("/v1/iam/permissions/test_permission")
@@ -372,7 +385,7 @@ async fn test_assign_permission_handler() {
             "/v1/iam/permissions/assign",
             axum::routing::post(assign_permission_handler),
         )
-        .with_state(state);
+        .with_state(Arc::new(state));
     let payload = AssignPermissionRequest {
         role_id: "test_role".to_string(),
         permission_id: "test_permission".to_string(),
@@ -398,7 +411,7 @@ async fn test_remove_permission_handler() {
             "/v1/iam/permissions/remove",
             axum::routing::post(remove_permission_handler),
         )
-        .with_state(state);
+        .with_state(Arc::new(state));
     let payload = RemovePermissionRequest {
         role_id: "test_role".to_string(),
         permission_id: "test_permission".to_string(),
@@ -424,7 +437,7 @@ async fn test_create_abac_policy_handler() {
             "/v1/iam/abac-policies",
             axum::routing::post(create_abac_policy_handler),
         )
-        .with_state(state);
+        .with_state(Arc::new(state));
     let payload = AbacPolicyRequest {
         name: "test_policy".to_string(),
         effect: "allow".to_string(),
@@ -451,7 +464,7 @@ async fn test_list_abac_policies_handler() {
             "/v1/iam/abac-policies",
             axum::routing::get(list_abac_policies_handler),
         )
-        .with_state(state);
+        .with_state(Arc::new(state));
     let req = Request::builder()
         .method("GET")
         .uri("/v1/iam/abac-policies")
@@ -472,7 +485,7 @@ async fn test_delete_abac_policy_handler() {
             "/v1/iam/abac-policies/{policy_id}",
             axum::routing::delete(delete_abac_policy_handler),
         )
-        .with_state(state);
+        .with_state(Arc::new(state));
     let req = Request::builder()
         .method("DELETE")
         .uri("/v1/iam/abac-policies/test_policy")
@@ -493,7 +506,7 @@ async fn test_assign_abac_policy_handler() {
             "/v1/iam/abac-policies/assign",
             axum::routing::post(assign_abac_policy_handler),
         )
-        .with_state(state);
+        .with_state(Arc::new(state));
     let payload = AssignAbacPolicyRequest {
         target_type: "user".to_string(),
         target_id: "user1".to_string(),

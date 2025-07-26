@@ -458,7 +458,7 @@ fn test_abac_router(state: AppState) -> Router {
             delete(delete_abac_policy_handler),
         )
         .route("/iam/abac/assign", post(assign_abac_policy_handler))
-        .with_state(state)
+        .with_state(Arc::new(state))
 }
 
 #[tokio::test]

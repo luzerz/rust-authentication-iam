@@ -22,7 +22,7 @@ static JWT_SECRET: Lazy<Vec<u8>> = Lazy::new(|| {
 const ACCESS_TOKEN_EXP_MIN: i64 = 15;
 const REFRESH_TOKEN_EXP_MIN: i64 = 60 * 24 * 7; // 7 days
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Claims {
     pub sub: String,
     pub exp: usize,

@@ -169,7 +169,7 @@ async fn main() {
         abac_repo: abac_policy_repo.clone(),
     });
 
-    let state = AppState {
+    let state = Arc::new(AppState {
         user_repo: user_repo.clone(),
         refresh_token_repo: refresh_token_repo.clone(),
         auth_service: auth_service.clone(),
@@ -180,7 +180,7 @@ async fn main() {
         permission_repo: permission_repo.clone(),
         abac_policy_repo: abac_policy_repo.clone(),
         authz_service: authz_service.clone(),
-    };
+    });
 
     let http_host = env::var("HTTP_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
     let http_port = env::var("HTTP_PORT").unwrap_or_else(|_| "8080".to_string());
@@ -223,14 +223,11 @@ async fn main() {
                 "/iam/abac/policies/{policy_id}",
                 axum::routing::delete(delete_abac_policy_handler),
             )
-            .route("/iam/abac/assign", post(assign_abac_policy_handler))
-            .layer(axum::middleware::from_fn(
-                authentication_service::interface::http_handlers::jwt_auth_middleware,
-            ));
+            .route("/iam/abac/assign", post(assign_abac_policy_handler));
         let app = Router::new()
             .nest("/v1", v1_routes)
             .merge(SwaggerUi::new("/swagger").url("/openapi.json", openapi.clone()))
-            .with_state(state.clone());
+            .with_state(state);
         let listener = TcpListener::bind(&http_addr).await.expect("Failed to bind");
         println!("HTTP server running at http://{http_addr}");
         axum::serve(listener, app).await.unwrap();

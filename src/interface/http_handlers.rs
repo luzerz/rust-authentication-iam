@@ -1,4 +1,11 @@
+use axum::extract::{State, FromRequestParts};
+use axum::http::{request::Parts, StatusCode};
+use axum::response::IntoResponse;
 use crate::interface::app_state::AppState;
+use crate::application::services::Claims;
+
+use std::sync::Arc;
+use axum::{Json};
 use crate::interface::{
     AbacConditionDto, AbacPolicyListResponse, AbacPolicyRequest, AbacPolicyResponse,
     AssignAbacPolicyRequest, AssignPermissionRequest, AssignRoleRequest, CreatePermissionRequest,
@@ -7,16 +14,7 @@ use crate::interface::{
     RemovePermissionRequest, RemoveRoleRequest, RoleResponse, RolesListResponse,
     ValidateTokenRequest, ValidateTokenResponse,
 };
-use axum::{Json, extract::State, response::IntoResponse};
-use axum::{
-    body::Body,
-    extract::FromRequestParts,
-    http::request::Parts,
-    http::{Request, StatusCode},
-    middleware::Next,
-    response::Response,
-};
-use tracing::{error, info};
+use std::ops::Deref;
 
 pub struct RequirePermission {
     pub user_id: String,
@@ -40,44 +38,39 @@ where
 
 pub struct AuthenticatedUser {
     pub user_id: String,
+    pub roles: Vec<String>,
+    pub claims: Claims,
 }
+
 
 impl<S> FromRequestParts<S> for AuthenticatedUser
 where
-    S: Send + Sync,
+    S: Deref<Target = AppState> + Send + Sync + 'static,
 {
     type Rejection = (StatusCode, &'static str);
-    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let app_state: &AppState = state.deref();
         let auth_header = parts
             .headers
             .get("authorization")
             .and_then(|v| v.to_str().ok())
             .ok_or((StatusCode::UNAUTHORIZED, "Missing Authorization header"))?;
-        // Expect "Bearer <token>"
-        let _token = auth_header
+        let token = auth_header
             .strip_prefix("Bearer ")
             .ok_or((StatusCode::UNAUTHORIZED, "Invalid Authorization header"))?;
-        // Validate JWT using TokenService from state (requires downcasting state to AppState)
-        // For demo, just accept any token and set user_id to "demo_user"
-        // In real code, extract AppState and call state.token_service.validate_token(token)
-        let user_id = "demo_user".to_string();
-        Ok(AuthenticatedUser { user_id })
+        let claims = app_state
+            .token_service
+            .validate_token(token)
+            .map_err(|_| (StatusCode::UNAUTHORIZED, "Invalid or expired token"))?;
+        Ok(AuthenticatedUser {
+            user_id: claims.sub.clone(),
+            roles: claims.roles.clone(),
+            claims,
+        })
     }
 }
 
-pub async fn jwt_auth_middleware(req: Request<Body>, next: Next) -> Result<Response, StatusCode> {
-    let auth_header = req
-        .headers()
-        .get("authorization")
-        .and_then(|v| v.to_str().ok());
-    if let Some(auth_header) = auth_header {
-        if auth_header.starts_with("Bearer ") {
-            // Optionally, validate JWT here
-            return Ok(next.run(req).await);
-        }
-    }
-    Err(StatusCode::UNAUTHORIZED)
-}
+
 
 // --- AUTH HANDLERS ---
 
@@ -94,10 +87,9 @@ pub async fn jwt_auth_middleware(req: Request<Body>, next: Next) -> Result<Respo
     description = "Authenticate user and return access/refresh tokens."
 )]
 pub async fn login_handler(
-    State(state): State<AppState>,
+    State(state): State<Arc<AppState>>,
     Json(payload): Json<LoginRequest>,
 ) -> impl IntoResponse {
-    info!(email = %payload.email, event = "login_request_start");
     let cmd = crate::application::commands::LoginUserCommand {
         email: payload.email.clone(),
         password: payload.password,
@@ -115,7 +107,6 @@ pub async fn login_handler(
         .await;
     match result {
         Ok((access_token, refresh_token)) => {
-            info!(email = %payload.email, event = "login_success");
             Json(LoginResponse {
                 access_token,
                 refresh_token,
@@ -123,7 +114,6 @@ pub async fn login_handler(
             .into_response()
         }
         Err(e) => {
-            error!(email = %payload.email, error = ?e, event = "login_error");
             (
                 axum::http::StatusCode::UNAUTHORIZED,
                 format!("Login failed: {e:?}"),
@@ -146,7 +136,7 @@ pub async fn login_handler(
     description = "Validate a JWT access token and return claims."
 )]
 pub async fn validate_token_handler(
-    State(state): State<AppState>,
+    State(state): State<Arc<AppState>>,
     Json(payload): Json<ValidateTokenRequest>,
 ) -> impl IntoResponse {
     let result = state.token_service.validate_token(&payload.token);
@@ -179,7 +169,7 @@ pub async fn validate_token_handler(
     description = "Refresh access and refresh tokens using a valid refresh token."
 )]
 pub async fn refresh_token_handler(
-    State(state): State<AppState>,
+    State(state): State<Arc<AppState>>,
     Json(payload): Json<RefreshTokenRequest>,
 ) -> impl IntoResponse {
     let result = state.token_service.validate_token(&payload.refresh_token);
@@ -233,7 +223,7 @@ pub async fn refresh_token_handler(
     description = "Logout user and revoke refresh token."
 )]
 pub async fn logout_handler(
-    State(state): State<AppState>,
+    State(state): State<Arc<AppState>>,
     Json(payload): Json<LogoutRequest>,
 ) -> impl IntoResponse {
     let result = state.token_service.validate_token(&payload.refresh_token);
@@ -267,7 +257,7 @@ use axum::extract::Path;
     description = "Create a new role. Requires rbac:manage permission."
 )]
 pub async fn create_role_handler(
-    State(state): State<AppState>,
+    State(state): State<Arc<AppState>>,
     _auth: AuthenticatedUser, // Require JWT auth
     RequirePermission { user_id }: RequirePermission,
     Json(payload): Json<CreateRoleRequest>,
@@ -306,7 +296,7 @@ pub async fn create_role_handler(
     tags = ["RBAC"],
     description = "List all roles."
 )]
-pub async fn list_roles_handler(State(state): State<AppState>) -> impl IntoResponse {
+pub async fn list_roles_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let roles = state.role_repo.list_roles().await;
     let roles = roles
         .into_iter()
@@ -331,7 +321,7 @@ pub async fn list_roles_handler(State(state): State<AppState>) -> impl IntoRespo
     description = "Delete a role by ID. Requires rbac:manage permission."
 )]
 pub async fn delete_role_handler(
-    State(state): State<AppState>,
+    State(state): State<Arc<AppState>>,
     RequirePermission { user_id }: RequirePermission,
     Path(role_id): Path<String>,
 ) -> impl IntoResponse {
@@ -364,7 +354,7 @@ pub async fn delete_role_handler(
     description = "Assign a role to a user. Requires rbac:manage permission."
 )]
 pub async fn assign_role_handler(
-    State(state): State<AppState>,
+    State(state): State<Arc<AppState>>,
     RequirePermission { user_id }: RequirePermission,
     Json(payload): Json<AssignRoleRequest>,
 ) -> impl IntoResponse {
@@ -400,7 +390,7 @@ pub async fn assign_role_handler(
     description = "Remove a role from a user. Requires rbac:manage permission."
 )]
 pub async fn remove_role_handler(
-    State(state): State<AppState>,
+    State(state): State<Arc<AppState>>,
     RequirePermission { user_id }: RequirePermission,
     Json(payload): Json<RemoveRoleRequest>,
 ) -> impl IntoResponse {
@@ -436,7 +426,7 @@ pub async fn remove_role_handler(
     description = "Create a new permission. Requires rbac:manage permission."
 )]
 pub async fn create_permission_handler(
-    State(state): State<AppState>,
+    State(state): State<Arc<AppState>>,
     RequirePermission { user_id }: RequirePermission,
     Json(payload): Json<CreatePermissionRequest>,
 ) -> impl IntoResponse {
@@ -477,7 +467,7 @@ pub async fn create_permission_handler(
     tags = ["RBAC"],
     description = "List all permissions."
 )]
-pub async fn list_permissions_handler(State(state): State<AppState>) -> impl IntoResponse {
+pub async fn list_permissions_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let perms = state
         .permission_repo
         .list_permissions()
@@ -505,7 +495,7 @@ pub async fn list_permissions_handler(State(state): State<AppState>) -> impl Int
     description = "Delete a permission by ID. Requires rbac:manage permission."
 )]
 pub async fn delete_permission_handler(
-    State(state): State<AppState>,
+    State(state): State<Arc<AppState>>,
     RequirePermission { user_id }: RequirePermission,
     Path(permission_id): Path<String>,
 ) -> impl IntoResponse {
@@ -542,7 +532,7 @@ pub async fn delete_permission_handler(
     description = "Assign a permission to a role. Requires rbac:manage permission."
 )]
 pub async fn assign_permission_handler(
-    State(state): State<AppState>,
+    State(state): State<Arc<AppState>>,
     RequirePermission { user_id }: RequirePermission,
     Json(payload): Json<AssignPermissionRequest>,
 ) -> impl IntoResponse {
@@ -579,7 +569,7 @@ pub async fn assign_permission_handler(
     description = "Remove a permission from a role. Requires rbac:manage permission."
 )]
 pub async fn remove_permission_handler(
-    State(state): State<AppState>,
+    State(state): State<Arc<AppState>>,
     RequirePermission { user_id }: RequirePermission,
     Json(payload): Json<RemovePermissionRequest>,
 ) -> impl IntoResponse {
@@ -618,7 +608,7 @@ pub async fn remove_permission_handler(
     description = "Create a new ABAC policy. Requires rbac:manage permission."
 )]
 pub async fn create_abac_policy_handler(
-    State(state): State<AppState>,
+    State(state): State<Arc<AppState>>,
     RequirePermission { user_id }: RequirePermission,
     Json(payload): Json<AbacPolicyRequest>,
 ) -> impl IntoResponse {
@@ -687,7 +677,7 @@ pub async fn create_abac_policy_handler(
     description = "List all ABAC policies."
 )]
 pub async fn list_abac_policies_handler(
-    State(state): State<AppState>,
+    State(state): State<Arc<AppState>>,
     RequirePermission { user_id }: RequirePermission,
 ) -> impl IntoResponse {
     let allowed = state
@@ -744,7 +734,7 @@ pub async fn list_abac_policies_handler(
     description = "Delete an ABAC policy by ID. Requires rbac:manage permission."
 )]
 pub async fn delete_abac_policy_handler(
-    State(state): State<AppState>,
+    State(state): State<Arc<AppState>>,
     RequirePermission { user_id }: RequirePermission,
     Path(policy_id): Path<String>,
 ) -> impl IntoResponse {
@@ -781,7 +771,7 @@ pub async fn delete_abac_policy_handler(
     description = "Assign an ABAC policy to a user or role. Requires rbac:manage permission."
 )]
 pub async fn assign_abac_policy_handler(
-    State(state): State<AppState>,
+    State(state): State<Arc<AppState>>,
     RequirePermission { user_id }: RequirePermission,
     Json(payload): Json<AssignAbacPolicyRequest>,
 ) -> impl IntoResponse {
