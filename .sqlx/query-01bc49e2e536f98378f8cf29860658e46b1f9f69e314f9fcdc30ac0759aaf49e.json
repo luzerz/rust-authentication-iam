@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO audit_events (\n                id, timestamp, event_type, user_id, ip_address, user_agent, \n                details, success, error_message\n            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Timestamptz",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Jsonb",
+        "Bool",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "01bc49e2e536f98378f8cf29860658e46b1f9f69e314f9fcdc30ac0759aaf49e"
+}

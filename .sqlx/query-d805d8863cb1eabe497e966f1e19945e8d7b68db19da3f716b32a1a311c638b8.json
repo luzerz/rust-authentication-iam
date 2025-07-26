@@ -1,0 +1,57 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE abac_policies SET name = $1, effect = $2, conditions_json = $3, priority = $4, conflict_resolution = $5, updated_at = NOW() WHERE id = $6 RETURNING id, name, effect, conditions_json, priority, conflict_resolution",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "effect",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "conditions_json",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "priority",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 5,
+        "name": "conflict_resolution",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Int4",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "d805d8863cb1eabe497e966f1e19945e8d7b68db19da3f716b32a1a311c638b8"
+}

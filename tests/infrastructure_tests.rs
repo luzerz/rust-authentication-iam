@@ -1,4 +1,6 @@
-use authentication_service::domain::abac_policy::{AbacCondition, AbacEffect, AbacPolicy};
+use authentication_service::domain::abac_policy::{
+    AbacCondition, AbacEffect, AbacPolicy, ConflictResolutionStrategy,
+};
 use authentication_service::domain::user::User;
 use authentication_service::infrastructure::{
     AbacPolicyRepository, InMemoryAbacPolicyRepository, InMemoryPermissionRepository,
@@ -73,6 +75,8 @@ async fn test_in_memory_abac_policy_repository_create_and_list() {
             operator: "eq".to_string(),
             value: "admin".to_string(),
         }],
+        priority: Some(50),
+        conflict_resolution: Some(ConflictResolutionStrategy::DenyOverrides),
     };
     let created = repo.create_policy(policy.clone()).await.unwrap();
     assert_eq!(created.name, "test_policy");

@@ -4,9 +4,9 @@ use authentication_service::application::services::{
 };
 use authentication_service::domain::user::User;
 use authentication_service::infrastructure::{
-    AbacPolicyRepository, InMemoryAbacPolicyRepository, InMemoryPermissionRepository,
-    InMemoryRefreshTokenRepository, InMemoryRoleRepository, InMemoryUserRepository,
-    PermissionRepository, RoleRepository,
+    AbacPolicyRepository, InMemoryAbacPolicyRepository, InMemoryPermissionGroupRepository,
+    InMemoryPermissionRepository, InMemoryRefreshTokenRepository, InMemoryRoleRepository,
+    InMemoryUserRepository, PermissionGroupRepository, PermissionRepository, RoleRepository,
 };
 use authentication_service::interface::app_state::AppState;
 use authentication_service::interface::http_handlers::{
@@ -77,6 +77,7 @@ fn mock_app_state() -> AppState {
         handler,
         role_repo,
         permission_repo,
+        permission_group_repo: Arc::new(InMemoryPermissionGroupRepository::new()),
         abac_policy_repo,
         authz_service,
     }
@@ -193,7 +194,7 @@ async fn test_logout_handler_invalid_token() {
 #[tokio::test]
 async fn test_create_role_handler() {
     let state = mock_app_state();
-    
+
     // Create a valid JWT token for testing
     let token_service = TokenService;
     let test_user = User {
@@ -204,8 +205,10 @@ async fn test_create_role_handler() {
         is_locked: false,
     };
     let refresh_token_repo = Arc::new(InMemoryRefreshTokenRepository::new());
-    let (access_token, _) = token_service.issue_tokens(&test_user, refresh_token_repo).await;
-    
+    let (access_token, _) = token_service
+        .issue_tokens(&test_user, refresh_token_repo)
+        .await;
+
     let app = Router::new()
         .route("/v1/iam/roles", axum::routing::post(create_role_handler))
         .with_state(Arc::new(state));
@@ -442,6 +445,8 @@ async fn test_create_abac_policy_handler() {
         name: "test_policy".to_string(),
         effect: "allow".to_string(),
         conditions: vec![],
+        priority: Some(50),
+        conflict_resolution: Some("deny_overrides".to_string()),
     };
     let req = Request::builder()
         .method("POST")

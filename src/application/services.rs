@@ -191,9 +191,11 @@ impl AuthZService {
         permission_name: &str,
         user_attrs: Option<&std::collections::HashMap<String, String>>,
     ) -> Result<bool, sqlx::Error> {
-        // RBAC check
+        // RBAC check with role inheritance
         let roles = self.role_repo.get_roles_for_user(user_id).await?;
         let perms = self.permission_repo.list_permissions().await?;
+
+        // Check direct role permissions
         for role in &roles {
             for perm in &perms {
                 if perm.name == permission_name {
@@ -207,6 +209,25 @@ impl AuthZService {
                 }
             }
         }
+
+        // Check inherited role permissions
+        for role in &roles {
+            let inherited_roles = self.role_repo.get_inherited_roles(&role.id).await?;
+            for inherited_role in &inherited_roles {
+                for perm in &perms {
+                    if perm.name == permission_name {
+                        let assigned = self
+                            .permission_repo
+                            .role_has_permission(&inherited_role.id, &perm.id)
+                            .await?;
+                        if assigned {
+                            return Ok(true);
+                        }
+                    }
+                }
+            }
+        }
+
         // ABAC check
         if let Some(attrs) = user_attrs {
             if self
@@ -249,6 +270,281 @@ impl AuthZService {
             }
         }
         Ok(false)
+    }
+
+    pub async fn evaluate_abac_policies(
+        &self,
+        user_id: &str,
+        permission_name: &str,
+        user_attrs: &std::collections::HashMap<String, String>,
+    ) -> Result<crate::interface::AbacEvaluationResponse, sqlx::Error> {
+        use crate::domain::abac_policy::{AbacEffect, ConflictResolutionStrategy};
+        use crate::interface::{AbacConditionDto, AbacPolicyEvaluationResult};
+
+        let policies = self.abac_repo.get_policies_for_user(user_id).await?;
+        let mut evaluated_policies = Vec::new();
+        let mut matching_policies = Vec::new();
+
+        // First pass: evaluate all policies and collect matching ones
+        for policy in &policies {
+            // Check if policy name matches permission (can be extended for more complex matching)
+            if policy.name == permission_name {
+                let mut matched_conditions = Vec::new();
+                let mut unmatched_conditions = Vec::new();
+                let mut all_match = true;
+
+                for cond in &policy.conditions {
+                    let val = user_attrs.get(&cond.attribute);
+                    let condition_dto = AbacConditionDto {
+                        attribute: cond.attribute.clone(),
+                        operator: cond.operator.clone(),
+                        value: cond.value.clone(),
+                    };
+
+                    match (val, cond.operator.as_str()) {
+                        (Some(v), "eq") if v == &cond.value => {
+                            matched_conditions.push(condition_dto);
+                        }
+                        (Some(v), "ne") if v != &cond.value => {
+                            matched_conditions.push(condition_dto);
+                        }
+                        (Some(v), "in") => {
+                            // Check if value is in comma-separated list
+                            let values: Vec<&str> = cond.value.split(',').collect();
+                            if values.contains(&v.as_str()) {
+                                matched_conditions.push(condition_dto);
+                            } else {
+                                unmatched_conditions.push(condition_dto);
+                                all_match = false;
+                            }
+                        }
+                        (Some(v), "gt") => {
+                            // Numeric comparison
+                            if let (Ok(attr_val), Ok(cond_val)) =
+                                (v.parse::<f64>(), cond.value.parse::<f64>())
+                            {
+                                if attr_val > cond_val {
+                                    matched_conditions.push(condition_dto);
+                                } else {
+                                    unmatched_conditions.push(condition_dto);
+                                    all_match = false;
+                                }
+                            } else {
+                                unmatched_conditions.push(condition_dto);
+                                all_match = false;
+                            }
+                        }
+                        (Some(v), "lt") => {
+                            // Numeric comparison
+                            if let (Ok(attr_val), Ok(cond_val)) =
+                                (v.parse::<f64>(), cond.value.parse::<f64>())
+                            {
+                                if attr_val < cond_val {
+                                    matched_conditions.push(condition_dto);
+                                } else {
+                                    unmatched_conditions.push(condition_dto);
+                                    all_match = false;
+                                }
+                            } else {
+                                unmatched_conditions.push(condition_dto);
+                                all_match = false;
+                            }
+                        }
+                        (Some(v), "gte") => {
+                            // Numeric comparison
+                            if let (Ok(attr_val), Ok(cond_val)) =
+                                (v.parse::<f64>(), cond.value.parse::<f64>())
+                            {
+                                if attr_val >= cond_val {
+                                    matched_conditions.push(condition_dto);
+                                } else {
+                                    unmatched_conditions.push(condition_dto);
+                                    all_match = false;
+                                }
+                            } else {
+                                unmatched_conditions.push(condition_dto);
+                                all_match = false;
+                            }
+                        }
+                        (Some(v), "lte") => {
+                            // Numeric comparison
+                            if let (Ok(attr_val), Ok(cond_val)) =
+                                (v.parse::<f64>(), cond.value.parse::<f64>())
+                            {
+                                if attr_val <= cond_val {
+                                    matched_conditions.push(condition_dto);
+                                } else {
+                                    unmatched_conditions.push(condition_dto);
+                                    all_match = false;
+                                }
+                            } else {
+                                unmatched_conditions.push(condition_dto);
+                                all_match = false;
+                            }
+                        }
+                        (Some(v), "contains") => {
+                            if v.contains(&cond.value) {
+                                matched_conditions.push(condition_dto);
+                            } else {
+                                unmatched_conditions.push(condition_dto);
+                                all_match = false;
+                            }
+                        }
+                        (Some(v), "starts_with") => {
+                            if v.starts_with(&cond.value) {
+                                matched_conditions.push(condition_dto);
+                            } else {
+                                unmatched_conditions.push(condition_dto);
+                                all_match = false;
+                            }
+                        }
+                        (Some(v), "ends_with") => {
+                            if v.ends_with(&cond.value) {
+                                matched_conditions.push(condition_dto);
+                            } else {
+                                unmatched_conditions.push(condition_dto);
+                                all_match = false;
+                            }
+                        }
+                        _ => {
+                            unmatched_conditions.push(condition_dto);
+                            all_match = false;
+                        }
+                    }
+                }
+
+                let effect_str = match policy.effect {
+                    AbacEffect::Allow => "Allow",
+                    AbacEffect::Deny => "Deny",
+                };
+
+                let evaluation_result = AbacPolicyEvaluationResult {
+                    policy_id: policy.id.clone(),
+                    policy_name: policy.name.clone(),
+                    effect: effect_str.to_string(),
+                    priority: policy.priority.unwrap_or(50),
+                    conflict_resolution: match policy
+                        .conflict_resolution
+                        .as_ref()
+                        .unwrap_or(&ConflictResolutionStrategy::DenyOverrides)
+                    {
+                        ConflictResolutionStrategy::DenyOverrides => "deny_overrides".to_string(),
+                        ConflictResolutionStrategy::AllowOverrides => "allow_overrides".to_string(),
+                        ConflictResolutionStrategy::PriorityWins => "priority_wins".to_string(),
+                        ConflictResolutionStrategy::FirstMatch => "first_match".to_string(),
+                    },
+                    matched: all_match,
+                    matched_conditions,
+                    unmatched_conditions,
+                    applied: false, // Will be set later based on conflict resolution
+                };
+
+                evaluated_policies.push(evaluation_result.clone());
+
+                if all_match {
+                    matching_policies.push((policy, evaluation_result));
+                }
+            }
+        }
+
+        // Second pass: apply conflict resolution strategy
+        let (allowed, reason, applied_policy_id) = if matching_policies.is_empty() {
+            (false, "No policies matched".to_string(), None)
+        } else {
+            // Determine which policy to apply based on conflict resolution strategy
+            let conflict_strategy = matching_policies[0]
+                .0
+                .conflict_resolution
+                .as_ref()
+                .unwrap_or(&ConflictResolutionStrategy::DenyOverrides);
+
+            match conflict_strategy {
+                ConflictResolutionStrategy::FirstMatch => {
+                    // First matching policy wins (current behavior)
+                    let (policy, _eval_result) = &matching_policies[0];
+                    let allowed = matches!(policy.effect, AbacEffect::Allow);
+                    let reason = format!(
+                        "First matching policy '{}' applied with effect '{}'",
+                        policy.name,
+                        if allowed { "Allow" } else { "Deny" }
+                    );
+                    (allowed, reason, Some(policy.id.clone()))
+                }
+                ConflictResolutionStrategy::DenyOverrides => {
+                    // Deny policies take precedence over Allow policies
+                    let deny_policy = matching_policies
+                        .iter()
+                        .find(|(p, _)| matches!(p.effect, AbacEffect::Deny));
+                    if let Some((policy, _)) = deny_policy {
+                        (
+                            false,
+                            format!("Deny policy '{}' overrides all allow policies", policy.name),
+                            Some(policy.id.clone()),
+                        )
+                    } else {
+                        let (policy, _) = &matching_policies[0];
+                        (
+                            true,
+                            format!("Allow policy '{}' applied (no deny policies)", policy.name),
+                            Some(policy.id.clone()),
+                        )
+                    }
+                }
+                ConflictResolutionStrategy::AllowOverrides => {
+                    // Allow policies take precedence over Deny policies
+                    let allow_policy = matching_policies
+                        .iter()
+                        .find(|(p, _)| matches!(p.effect, AbacEffect::Allow));
+                    if let Some((policy, _)) = allow_policy {
+                        (
+                            true,
+                            format!("Allow policy '{}' overrides all deny policies", policy.name),
+                            Some(policy.id.clone()),
+                        )
+                    } else {
+                        let (policy, _) = &matching_policies[0];
+                        (
+                            false,
+                            format!("Deny policy '{}' applied (no allow policies)", policy.name),
+                            Some(policy.id.clone()),
+                        )
+                    }
+                }
+                ConflictResolutionStrategy::PriorityWins => {
+                    // Higher priority policy wins regardless of effect
+                    let highest_priority_policy = matching_policies
+                        .iter()
+                        .max_by_key(|(p, _)| p.priority.unwrap_or(50))
+                        .unwrap();
+                    let (policy, _) = highest_priority_policy;
+                    let allowed = matches!(policy.effect, AbacEffect::Allow);
+                    let reason = format!(
+                        "Highest priority policy '{}' (priority: {}) applied with effect '{}'",
+                        policy.name,
+                        policy.priority.unwrap_or(50),
+                        if allowed { "Allow" } else { "Deny" }
+                    );
+                    (allowed, reason, Some(policy.id.clone()))
+                }
+            }
+        };
+
+        // Mark the applied policy
+        for eval_result in &mut evaluated_policies {
+            if let Some(applied_id) = &applied_policy_id {
+                if eval_result.policy_id == *applied_id {
+                    eval_result.applied = true;
+                }
+            }
+        }
+
+        Ok(crate::interface::AbacEvaluationResponse {
+            user_id: user_id.to_string(),
+            permission_name: permission_name.to_string(),
+            allowed,
+            evaluated_policies,
+            reason,
+        })
     }
 }
 

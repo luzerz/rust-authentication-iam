@@ -23,10 +23,14 @@ impl PermissionRepository for PostgresPermissionRepository {
     async fn create_permission(&self, name: &str) -> RepoResult<Permission> {
         let id = uuid::Uuid::new_v4().to_string();
         let rec = sqlx::query_as::<_, Permission>(
-            "INSERT INTO permissions (id, name) VALUES ($1, $2) RETURNING id, name",
+            "INSERT INTO permissions (id, name, description, group_id, metadata, is_active) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, name, description, group_id, metadata, is_active",
         )
         .bind(&id)
         .bind(name)
+        .bind::<Option<String>>(None) // description
+        .bind::<Option<String>>(None) // group_id
+        .bind(serde_json::json!({})) // metadata
+        .bind(true) // is_active
         .fetch_one(&self.pool)
         .await;
         if let Err(ref e) = rec {
@@ -35,8 +39,19 @@ impl PermissionRepository for PostgresPermissionRepository {
         rec
     }
     #[instrument]
+    async fn get_permission(&self, permission_id: &str) -> RepoResult<Option<Permission>> {
+        let res = sqlx::query_as::<_, Permission>("SELECT id, name, description, group_id, metadata, is_active FROM permissions WHERE id = $1")
+            .bind(permission_id)
+            .fetch_optional(&self.pool)
+            .await;
+        if let Err(ref e) = res {
+            error!(error = %e, "Failed to get permission");
+        }
+        res
+    }
+    #[instrument]
     async fn list_permissions(&self) -> RepoResult<Vec<Permission>> {
-        let res = sqlx::query_as::<_, Permission>("SELECT id, name FROM permissions")
+        let res = sqlx::query_as::<_, Permission>("SELECT id, name, description, group_id, metadata, is_active FROM permissions ORDER BY name")
             .fetch_all(&self.pool)
             .await;
         if let Err(ref e) = res {
@@ -100,5 +115,24 @@ impl PermissionRepository for PostgresPermissionRepository {
         .fetch_optional(&self.pool)
         .await?;
         Ok(found.is_some())
+    }
+    #[instrument]
+    async fn get_permissions_for_role(&self, role_id: &str) -> RepoResult<Vec<Permission>> {
+        let rows = sqlx::query_as::<_, Permission>(
+            r#"
+            SELECT p.id, p.name, p.description, p.group_id, p.metadata, p.is_active
+            FROM permissions p
+            INNER JOIN role_permissions rp ON rp.permission_id = p.id
+            WHERE rp.role_id = $1
+            ORDER BY p.name
+            "#,
+        )
+        .bind(role_id)
+        .fetch_all(&self.pool)
+        .await;
+        if let Err(ref e) = rows {
+            error!(error = %e, "Failed to get permissions for role");
+        }
+        rows
     }
 }

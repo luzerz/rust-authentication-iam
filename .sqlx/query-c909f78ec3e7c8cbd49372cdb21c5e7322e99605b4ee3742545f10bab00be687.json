@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE permission_groups\n            SET name = $1, description = $2, category = $3, metadata = $4, is_active = $5\n            WHERE id = $6\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Jsonb",
+        "Bool",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c909f78ec3e7c8cbd49372cdb21c5e7322e99605b4ee3742545f10bab00be687"
+}

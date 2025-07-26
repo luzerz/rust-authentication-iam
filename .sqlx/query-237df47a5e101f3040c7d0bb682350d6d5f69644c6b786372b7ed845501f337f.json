@@ -1,0 +1,52 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT p.id, p.name, p.effect, p.conditions_json, p.priority, p.conflict_resolution\n            FROM abac_policies p\n            INNER JOIN user_abac_policies uap ON uap.policy_id = p.id\n            WHERE uap.user_id = $1\n            ORDER BY p.priority DESC\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "effect",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "conditions_json",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "priority",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 5,
+        "name": "conflict_resolution",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "237df47a5e101f3040c7d0bb682350d6d5f69644c6b786372b7ed845501f337f"
+}

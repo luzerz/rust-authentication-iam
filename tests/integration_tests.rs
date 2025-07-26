@@ -2,15 +2,16 @@ use async_trait::async_trait;
 use authentication_service::application::services::{
     AuthService, AuthZService, PasswordService, TokenService,
 };
-use authentication_service::domain::abac_policy::{AbacCondition, AbacEffect, AbacPolicy};
+use authentication_service::domain::abac_policy::{
+    AbacCondition, AbacEffect, AbacPolicy, ConflictResolutionStrategy,
+};
+use authentication_service::domain::permission_group::PermissionGroup;
 use authentication_service::infrastructure::AbacPolicyRepository;
 use authentication_service::infrastructure::InMemoryAbacPolicyRepository;
 use authentication_service::infrastructure::RefreshTokenRepository;
 use authentication_service::infrastructure::{
-    InMemoryPermissionRepository, InMemoryRoleRepository,
-};
-use authentication_service::infrastructure::{
-    PermissionRepository, RoleRepository, UserRepository,
+    InMemoryPermissionGroupRepository, InMemoryPermissionRepository, InMemoryRoleRepository,
+    PermissionGroupRepository, PermissionRepository, RoleRepository, UserRepository,
 };
 use authentication_service::interface::{
     AbacConditionDto, AbacPolicyRequest, AppState, AssignAbacPolicyRequest,
@@ -412,6 +413,8 @@ async fn test_abac_policy_crud_and_assignment() {
             operator: "eq".to_string(),
             value: "finance".to_string(),
         }],
+        priority: Some(50),
+        conflict_resolution: Some(ConflictResolutionStrategy::DenyOverrides),
     };
     let created = abac_repo.create_policy(policy.clone()).await.unwrap();
     assert_eq!(created.name, "can_view_reports");
@@ -502,6 +505,7 @@ async fn test_abac_policy_http_endpoints() {
         handler: Arc::new(LoginUserHandler),
         role_repo,
         permission_repo: perm_repo,
+        permission_group_repo: Arc::new(InMemoryPermissionGroupRepository::new()),
         abac_policy_repo: abac_repo,
         authz_service,
     };
@@ -525,6 +529,8 @@ async fn test_abac_policy_http_endpoints() {
             operator: "eq".to_string(),
             value: "finance".to_string(),
         }],
+        priority: Some(50),
+        conflict_resolution: Some("deny_overrides".to_string()),
     };
     let resp = client
         .post(format!("http://{addr}/iam/abac/policies"))
@@ -576,4 +582,127 @@ async fn test_abac_policy_http_endpoints() {
         .await
         .unwrap();
     assert_eq!(resp.status(), 401);
+}
+
+#[tokio::test]
+async fn test_user_registration_flow() {
+    // Set up test environment
+    unsafe {
+        std::env::set_var("JWT_SECRET", "test-secret-key-for-testing-only");
+    }
+
+    // Create repositories
+    let user_repo = Arc::new(InMemoryUserRepository::new(vec![]));
+    let refresh_token_repo = Arc::new(MockRefreshTokenRepository::new());
+
+    // Test user registration
+    let test_user = User::new(
+        "test-user-1".to_string(),
+        "newuser@example.com".to_string(),
+        bcrypt::hash("password123", bcrypt::DEFAULT_COST).unwrap(),
+    );
+
+    // Create user
+    let created_user = user_repo.create_user(test_user.clone()).await.unwrap();
+    assert_eq!(created_user.email, "newuser@example.com");
+    assert_eq!(created_user.id, "test-user-1");
+
+    // Verify user can be found by email
+    let found_user = user_repo.find_by_email("newuser@example.com").await;
+    assert!(found_user.is_some());
+    let found_user = found_user.unwrap();
+    assert_eq!(found_user.email, "newuser@example.com");
+
+    // Verify user can be found by ID
+    let found_user_by_id = user_repo.find_by_id("test-user-1").await.unwrap();
+    assert!(found_user_by_id.is_some());
+    let found_user_by_id = found_user_by_id.unwrap();
+    assert_eq!(found_user_by_id.email, "newuser@example.com");
+
+    // Test password update
+    let new_password_hash = bcrypt::hash("newpassword123", bcrypt::DEFAULT_COST).unwrap();
+    user_repo
+        .update_password("test-user-1", &new_password_hash)
+        .await
+        .unwrap();
+
+    // Verify password was updated
+    let updated_user = user_repo.find_by_id("test-user-1").await.unwrap().unwrap();
+    assert_eq!(updated_user.password_hash, new_password_hash);
+}
+
+#[tokio::test]
+async fn test_permission_group_flow() {
+    // Set up test environment
+    unsafe {
+        std::env::set_var("JWT_SECRET", "test-secret-key-for-testing-only");
+    }
+
+    // Create repositories
+    let user_repo = Arc::new(InMemoryUserRepository::new(vec![]));
+    let refresh_token_repo = Arc::new(MockRefreshTokenRepository::new());
+    let permission_group_repo = Arc::new(InMemoryPermissionGroupRepository::new());
+
+    // Test permission group creation
+    let test_group = PermissionGroup::new("group1".to_string(), "User Management".to_string())
+        .with_description("Permissions for managing users".to_string())
+        .with_category("user_management".to_string())
+        .with_metadata(serde_json::json!({
+            "version": "1.0",
+            "deprecated": false
+        }));
+
+    // Create group
+    let created_group = permission_group_repo
+        .create_group(test_group.clone())
+        .await
+        .unwrap();
+    assert_eq!(created_group.name, "User Management");
+    assert_eq!(
+        created_group.description,
+        Some("Permissions for managing users".to_string())
+    );
+    assert_eq!(created_group.category, Some("user_management".to_string()));
+
+    // Verify group can be found
+    let found_group = permission_group_repo.get_group("group1").await.unwrap();
+    assert!(found_group.is_some());
+    let found_group = found_group.unwrap();
+    assert_eq!(found_group.name, "User Management");
+
+    // Test listing groups
+    let all_groups = permission_group_repo.list_groups().await.unwrap();
+    assert_eq!(all_groups.len(), 1);
+    assert_eq!(all_groups[0].name, "User Management");
+
+    // Test listing groups by category
+    let category_groups = permission_group_repo
+        .list_groups_by_category("user_management")
+        .await
+        .unwrap();
+    assert_eq!(category_groups.len(), 1);
+    assert_eq!(category_groups[0].name, "User Management");
+
+    // Test updating group
+    let mut updated_group = found_group;
+    updated_group.set_active_status(false);
+    permission_group_repo
+        .update_group(&updated_group)
+        .await
+        .unwrap();
+
+    // Verify update
+    let updated_found = permission_group_repo
+        .get_group("group1")
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!updated_found.is_active);
+
+    // Test deleting group
+    permission_group_repo.delete_group("group1").await.unwrap();
+
+    // Verify deletion
+    let deleted_group = permission_group_repo.get_group("group1").await.unwrap();
+    assert!(deleted_group.is_none());
 }
