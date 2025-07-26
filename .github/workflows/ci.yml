@@ -323,24 +323,24 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
-      - name: Install PostgreSQL client
-        run: sudo apt-get update && sudo apt-get install -y postgresql-client
-      - name: Install sqlx CLI
-        run: cargo install sqlx-cli --no-default-features --features postgres
-      - name: Run cargo build
-        run: cargo build --release
-      - name: Install tarpaulin
-        run: cargo install cargo-tarpaulin
       - name: Wait for database
         run: |
           until pg_isready -h localhost -p 5433 -U test_user -d test_auth_db; do
             echo "Waiting for database..."
             sleep 2
-          done
+          done        
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Install sqlx CLI
+        run: cargo install sqlx-cli --no-default-features --features postgres
       - name: Run migrations
         run: sqlx migrate run --database-url $DATABASE_URL
       - name: Prepare SQLx data
         run: cargo sqlx prepare --database-url $DATABASE_URL
+      - name: Install tarpaulin
+        run: cargo install cargo-tarpaulin
+      - name: Run cargo build
+        run: cargo build --release
       - name: Run tests with coverage for SonarCloud
         run: |
           cargo tarpaulin --out Xml --all --release --output-dir target/sonar
