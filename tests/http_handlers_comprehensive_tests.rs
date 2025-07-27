@@ -49,6 +49,8 @@ fn create_user_without_permissions() -> User {
 async fn create_app_state_with_admin() -> Arc<AppState> {
     unsafe {
         std::env::set_var("JWT_SECRET", "test-secret-key-for-testing-only");
+        std::env::set_var("JWT_EXPIRATION", "1");
+        std::env::set_var("JWT_TIME_UNIT", "hours");
     }
 
     let test_user = create_test_user();

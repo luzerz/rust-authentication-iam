@@ -217,25 +217,23 @@ impl<C> CommandWithContext<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::commands::{CommandFactory, LoginUserCommand};
-    use crate::application::services::{PasswordService, TokenService};
-    use crate::infrastructure::{InMemoryRefreshTokenRepository, InMemoryUserRepository, UserRepository};
+    use crate::application::commands::{CommandFactory, AuthenticateUserCommand};
+    use crate::application::services::PasswordService;
+    use crate::infrastructure::{InMemoryUserRepository, UserRepository};
     use std::sync::Arc;
 
     // Mock command handler for testing
-    struct MockLoginHandler {
-        token_service: TokenService,
+    struct MockAuthenticateHandler {
         password_service: PasswordService,
         user_repo: Arc<InMemoryUserRepository>,
-        refresh_token_repo: Arc<InMemoryRefreshTokenRepository>,
     }
 
     #[async_trait]
-    impl CommandHandler<LoginUserCommand> for MockLoginHandler {
-        type Result = (String, String); // (access_token, refresh_token)
+    impl CommandHandler<AuthenticateUserCommand> for MockAuthenticateHandler {
+        type Result = crate::domain::user::User;
         type Error = crate::application::services::AuthError;
 
-        async fn handle(&self, command: LoginUserCommand) -> Result<Self::Result, Self::Error> {
+        async fn handle(&self, command: AuthenticateUserCommand) -> Result<Self::Result, Self::Error> {
             let user = self
                 .user_repo
                 .find_by_email(&command.email)
@@ -250,9 +248,7 @@ mod tests {
                 return Err(crate::application::services::AuthError::InvalidCredentials);
             }
 
-            self.token_service
-                .issue_tokens(&user, &self.refresh_token_repo)
-                .await
+            Ok(user)
         }
     }
 
@@ -263,6 +259,8 @@ mod tests {
         // Set up test environment
         unsafe {
             std::env::set_var("JWT_SECRET", "test-secret-key-for-testing-only");
+            std::env::set_var("JWT_EXPIRATION", "1");
+            std::env::set_var("JWT_TIME_UNIT", "hours");
         }
 
         // Create a user for testing
@@ -276,20 +274,17 @@ mod tests {
             failed_login_attempts: 0,
         };
         let user_repo = Arc::new(InMemoryUserRepository::new(vec![user]));
-        let refresh_token_repo = Arc::new(InMemoryRefreshTokenRepository::new());
 
-        let handler = MockLoginHandler {
-            token_service: TokenService,
+        let handler = MockAuthenticateHandler {
             password_service: PasswordService,
             user_repo,
-            refresh_token_repo,
         };
 
         // Register handler
         command_bus.register_handler(handler).await;
 
         // Execute command
-        let command = CommandFactory::login_user(
+        let command = CommandFactory::authenticate_user(
             "test@example.com".to_string(),
             "password123".to_string(),
             None,
@@ -304,7 +299,7 @@ mod tests {
     async fn test_command_bus_no_handler() {
         let command_bus = CommandBus::new();
 
-        let command = CommandFactory::login_user(
+        let command = CommandFactory::authenticate_user(
             "test@example.com".to_string(),
             "password123".to_string(),
             None,

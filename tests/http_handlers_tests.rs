@@ -24,6 +24,8 @@ use tower::ServiceExt;
 fn setup_test_env() {
     unsafe {
         std::env::set_var("JWT_SECRET", "test-secret-key-for-testing-only");
+        std::env::set_var("JWT_EXPIRATION", "1");
+        std::env::set_var("JWT_TIME_UNIT", "hours");
     }
 }
 

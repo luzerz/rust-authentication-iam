@@ -58,7 +58,7 @@ pub struct UpdateRoleRequest {
     pub name: String,
 }
 
-#[derive(Serialize, Deserialize, ToSchema)]
+#[derive(Serialize, Deserialize, ToSchema, Debug)]
 pub struct RoleResponse {
     pub id: String,
     pub name: String,
@@ -95,7 +95,7 @@ pub struct CreateRoleHierarchyRequest {
     pub child_role_id: String,
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, ToSchema, Debug)]
 pub struct RoleHierarchyResponse {
     pub role_id: String,
     pub role_name: String,

@@ -911,3 +911,525 @@ impl QueryHandler<GetPermissionByIdQuery> for GetPermissionByIdQueryHandler {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::application::queries::QueryFactory;
+    use crate::domain::user::User;
+    use crate::infrastructure::{
+        InMemoryAbacPolicyRepository, InMemoryPermissionGroupRepository, InMemoryPermissionRepository,
+        InMemoryRoleRepository, InMemoryUserRepository,
+    };
+    use bcrypt::DEFAULT_COST;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    fn setup_test_env() {
+        unsafe {
+            std::env::set_var("JWT_SECRET", "test-secret-key-for-testing-only");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_get_user_by_id_query_handler_success() {
+        setup_test_env();
+
+        let password_hash = bcrypt::hash("password123", DEFAULT_COST).unwrap();
+        let user = User {
+            id: "user1".to_string(),
+            email: "test@example.com".to_string(),
+            password_hash,
+            roles: vec![],
+            is_locked: false,
+            failed_login_attempts: 0,
+        };
+
+        let user_repo = Arc::new(InMemoryUserRepository::new(vec![user]));
+        let role_repo = Arc::new(InMemoryRoleRepository::new());
+        let permission_repo = Arc::new(InMemoryPermissionRepository::new());
+
+        // Create role and assign to user
+        let admin_role = role_repo.create_role("admin").await;
+        role_repo.assign_role("user1", &admin_role.id).await;
+
+        let handler = GetUserByIdQueryHandler::new(user_repo, role_repo, permission_repo);
+
+        let query = QueryFactory::get_user_by_id(
+            "user1".to_string(),
+            true,
+            false,
+        );
+
+        let result = handler.handle(query).await;
+        assert!(result.is_ok());
+        let user_read_model = result.unwrap();
+        assert!(user_read_model.is_some());
+        let user_read_model = user_read_model.unwrap();
+        assert_eq!(user_read_model.id, "user1");
+        assert_eq!(user_read_model.email, "test@example.com");
+        assert_eq!(user_read_model.roles.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_get_user_by_id_query_handler_user_not_found() {
+        setup_test_env();
+
+        let user_repo = Arc::new(InMemoryUserRepository::new(vec![]));
+        let role_repo = Arc::new(InMemoryRoleRepository::new());
+        let permission_repo = Arc::new(InMemoryPermissionRepository::new());
+
+        let handler = GetUserByIdQueryHandler::new(user_repo, role_repo, permission_repo);
+
+        let query = QueryFactory::get_user_by_id(
+            "nonexistent".to_string(),
+            false,
+            false,
+        );
+
+        let result = handler.handle(query).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_get_roles_for_user_query_handler_success() {
+        setup_test_env();
+
+        let role_repo = Arc::new(InMemoryRoleRepository::new());
+        let admin_role = role_repo.create_role("admin").await;
+        let user_role = role_repo.create_role("user").await;
+
+        // Assign roles to user
+        role_repo.assign_role("user1", &admin_role.id).await;
+        role_repo.assign_role("user1", &user_role.id).await;
+
+        let handler = GetRolesForUserQueryHandler::new(role_repo);
+
+        let query = QueryFactory::get_roles_for_user(
+            "user1".to_string(),
+            false,
+        );
+
+        let result = handler.handle(query).await;
+        assert!(result.is_ok());
+        let roles = result.unwrap();
+        assert_eq!(roles.len(), 2); // Both roles are returned
+    }
+
+    #[tokio::test]
+    async fn test_check_user_permission_query_handler_success() {
+        setup_test_env();
+
+        let role_repo = Arc::new(InMemoryRoleRepository::new());
+        let permission_repo = Arc::new(InMemoryPermissionRepository::new());
+        let abac_repo = Arc::new(InMemoryAbacPolicyRepository::new());
+
+        let handler = CheckUserPermissionQueryHandler::new(role_repo, permission_repo, abac_repo);
+
+        let query = QueryFactory::check_user_permission(
+            "user1".to_string(),
+            "read".to_string(),
+            None,
+        );
+
+        let result = handler.handle(query).await;
+        assert!(result.is_ok());
+        // Should return false for non-existent user
+        assert!(!result.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_check_permission_query_handler_success() {
+        setup_test_env();
+
+        let role_repo = Arc::new(InMemoryRoleRepository::new());
+        let permission_repo = Arc::new(InMemoryPermissionRepository::new());
+        let abac_repo = Arc::new(InMemoryAbacPolicyRepository::new());
+
+        let handler = CheckPermissionQueryHandler::new(role_repo, permission_repo, abac_repo);
+
+        let query = QueryFactory::check_permission(
+            "user1".to_string(),
+            "read".to_string(),
+            None,
+        );
+
+        let result = handler.handle(query).await;
+        assert!(result.is_ok());
+        // Should return false for non-existent user
+        assert!(!result.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_list_users_query_handler_success() {
+        setup_test_env();
+
+        let user_repo = Arc::new(InMemoryUserRepository::new(vec![]));
+        let role_repo = Arc::new(InMemoryRoleRepository::new());
+
+        let handler = ListUsersQueryHandler::new(user_repo, role_repo);
+
+        let query = QueryFactory::list_users(
+            1,
+            10,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+
+        let result = handler.handle(query).await;
+        assert!(result.is_ok());
+        let paginated_result = result.unwrap();
+        assert_eq!(paginated_result.items.len(), 0);
+        assert_eq!(paginated_result.total_count, 0);
+    }
+
+    #[tokio::test]
+    async fn test_list_roles_query_handler_success() {
+        setup_test_env();
+
+        let role_repo = Arc::new(InMemoryRoleRepository::new());
+        let permission_repo = Arc::new(InMemoryPermissionRepository::new());
+
+        // Create some roles
+        role_repo.create_role("admin").await;
+        role_repo.create_role("user").await;
+
+        let handler = ListRolesQueryHandler::new(role_repo, permission_repo);
+
+        let query = QueryFactory::list_roles(
+            1,
+            10,
+            None,
+            false,
+            None,
+            None,
+        );
+
+        let result = handler.handle(query).await;
+        assert!(result.is_ok());
+        let paginated_result = result.unwrap();
+        assert_eq!(paginated_result.items.len(), 2);
+        assert_eq!(paginated_result.total_count, 2);
+    }
+
+    #[tokio::test]
+    async fn test_list_permissions_query_handler_success() {
+        setup_test_env();
+
+        let permission_repo = Arc::new(InMemoryPermissionRepository::new());
+        let permission_group_repo = Arc::new(InMemoryPermissionGroupRepository::new());
+
+        let handler = ListPermissionsQueryHandler::new(permission_repo, permission_group_repo);
+
+        let query = QueryFactory::list_permissions(
+            1,
+            10,
+            None,
+            None,
+            None,
+            None,
+        );
+
+        let result = handler.handle(query).await;
+        assert!(result.is_ok());
+        let paginated_result = result.unwrap();
+        assert_eq!(paginated_result.items.len(), 0);
+        assert_eq!(paginated_result.total_count, 0);
+    }
+
+    #[tokio::test]
+    async fn test_get_permissions_for_user_query_handler_success() {
+        setup_test_env();
+
+        let role_repo = Arc::new(InMemoryRoleRepository::new());
+        let permission_repo = Arc::new(InMemoryPermissionRepository::new());
+        let abac_repo = Arc::new(InMemoryAbacPolicyRepository::new());
+
+        let handler = GetPermissionsForUserQueryHandler::new(role_repo, permission_repo, abac_repo);
+
+        let query = QueryFactory::get_permissions_for_user(
+            "user1".to_string(),
+            false,
+            false,
+        );
+
+        let result = handler.handle(query).await;
+        assert!(result.is_ok());
+        let permissions = result.unwrap();
+        assert_eq!(permissions.len(), 0); // No roles assigned to user
+    }
+
+    #[tokio::test]
+    async fn test_get_user_audit_events_query_handler_success() {
+        setup_test_env();
+
+        let handler = GetUserAuditEventsQueryHandler::new();
+
+        let query = QueryFactory::get_user_audit_events(
+            "user1".to_string(),
+            1,
+            10,
+            None,
+            None,
+            None,
+        );
+
+        let result = handler.handle(query).await;
+        assert!(result.is_ok());
+        let paginated_result = result.unwrap();
+        assert_eq!(paginated_result.items.len(), 0);
+        assert_eq!(paginated_result.total_count, 0);
+    }
+
+    #[tokio::test]
+    async fn test_list_abac_policies_query_handler_success() {
+        setup_test_env();
+
+        let abac_policy_repo = Arc::new(InMemoryAbacPolicyRepository::new());
+
+        let handler = ListAbacPoliciesQueryHandler::new(abac_policy_repo);
+
+        let query = QueryFactory::list_abac_policies(
+            1,
+            10,
+            None,
+            None,
+            false,
+            None,
+            None,
+        );
+
+        let result = handler.handle(query).await;
+        assert!(result.is_ok());
+        let paginated_result = result.unwrap();
+        assert_eq!(paginated_result.items.len(), 0);
+        assert_eq!(paginated_result.total_count, 0);
+    }
+
+    #[tokio::test]
+    async fn test_list_permission_groups_query_handler_success() {
+        setup_test_env();
+
+        let permission_group_repo = Arc::new(InMemoryPermissionGroupRepository::new());
+
+        let handler = ListPermissionGroupsQueryHandler::new(permission_group_repo);
+
+        let query = QueryFactory::list_permission_groups(
+            1,
+            10,
+            None,
+            None,
+            false,
+            None,
+            None,
+        );
+
+        let result = handler.handle(query).await;
+        assert!(result.is_ok());
+        let paginated_result = result.unwrap();
+        assert_eq!(paginated_result.items.len(), 0);
+        assert_eq!(paginated_result.total_count, 0);
+    }
+
+    #[tokio::test]
+    async fn test_get_permission_group_query_handler_success() {
+        setup_test_env();
+
+        let permission_group_repo = Arc::new(InMemoryPermissionGroupRepository::new());
+
+        let handler = GetPermissionGroupQueryHandler::new(permission_group_repo);
+
+        let query = QueryFactory::get_permission_group(
+            "group1".to_string(),
+            false,
+        );
+
+        let result = handler.handle(query).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none()); // Group doesn't exist
+    }
+
+    #[tokio::test]
+    async fn test_get_role_hierarchy_query_handler_success() {
+        setup_test_env();
+
+        let role_repo = Arc::new(InMemoryRoleRepository::new());
+        let admin_role = role_repo.create_role("admin").await;
+
+        let handler = GetRoleHierarchyQueryHandler::new(role_repo);
+
+        let query = QueryFactory::get_role_hierarchy(
+            admin_role.id.clone(),
+        );
+
+        let result = handler.handle(query).await;
+        assert!(result.is_ok());
+        let hierarchy = result.unwrap();
+        assert_eq!(hierarchy.role_id, admin_role.id);
+        assert_eq!(hierarchy.role_name, "admin");
+    }
+
+    #[tokio::test]
+    async fn test_get_role_hierarchy_query_handler_role_not_found() {
+        setup_test_env();
+
+        let role_repo = Arc::new(InMemoryRoleRepository::new());
+
+        let handler = GetRoleHierarchyQueryHandler::new(role_repo);
+
+        let query = QueryFactory::get_role_hierarchy(
+            "nonexistent".to_string(),
+        );
+
+        let result = handler.handle(query).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), AuthError::UserNotFound));
+    }
+
+    #[tokio::test]
+    async fn test_list_role_hierarchies_query_handler_success() {
+        setup_test_env();
+
+        let role_repo = Arc::new(InMemoryRoleRepository::new());
+        role_repo.create_role("admin").await;
+        role_repo.create_role("user").await;
+
+        let handler = ListRoleHierarchiesQueryHandler::new(role_repo);
+
+        let query = QueryFactory::list_role_hierarchies();
+
+        let result = handler.handle(query).await;
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert_eq!(response.hierarchies.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_get_permissions_in_group_query_handler_success() {
+        setup_test_env();
+
+        let permission_group_repo = Arc::new(InMemoryPermissionGroupRepository::new());
+
+        let handler = GetPermissionsInGroupQueryHandler::new(permission_group_repo);
+
+        let query = QueryFactory::get_permissions_in_group(
+            "group1".to_string(),
+            1,
+            10,
+        );
+
+        let result = handler.handle(query).await;
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert_eq!(response.permissions.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_get_role_permissions_query_handler_success() {
+        setup_test_env();
+
+        let permission_repo = Arc::new(InMemoryPermissionRepository::new());
+
+        let handler = GetRolePermissionsQueryHandler::new(permission_repo);
+
+        let query = QueryFactory::get_role_permissions(
+            "role1".to_string(),
+        );
+
+        let result = handler.handle(query).await;
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert_eq!(response.role_id, "role1");
+        assert_eq!(response.permissions.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_get_role_by_id_query_handler_success() {
+        setup_test_env();
+
+        let role_repo = Arc::new(InMemoryRoleRepository::new());
+        let permission_repo = Arc::new(InMemoryPermissionRepository::new());
+
+        let admin_role = role_repo.create_role("admin").await;
+
+        let handler = GetRoleByIdQueryHandler::new(role_repo, permission_repo);
+
+        let query = QueryFactory::get_role_by_id(
+            admin_role.id.clone(),
+            false,
+        );
+
+        let result = handler.handle(query).await;
+        assert!(result.is_ok());
+        let role_read_model = result.unwrap();
+        assert!(role_read_model.is_some());
+        let role_read_model = role_read_model.unwrap();
+        assert_eq!(role_read_model.id, admin_role.id);
+        assert_eq!(role_read_model.name, "admin");
+    }
+
+    #[tokio::test]
+    async fn test_get_role_by_id_query_handler_role_not_found() {
+        setup_test_env();
+
+        let role_repo = Arc::new(InMemoryRoleRepository::new());
+        let permission_repo = Arc::new(InMemoryPermissionRepository::new());
+
+        let handler = GetRoleByIdQueryHandler::new(role_repo, permission_repo);
+
+        let query = QueryFactory::get_role_by_id(
+            "nonexistent".to_string(),
+            false,
+        );
+
+        let result = handler.handle(query).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), AuthError::UserNotFound));
+    }
+
+    #[tokio::test]
+    async fn test_get_permission_by_id_query_handler_success() {
+        setup_test_env();
+
+        let permission_repo = Arc::new(InMemoryPermissionRepository::new());
+
+        let handler = GetPermissionByIdQueryHandler::new(permission_repo);
+
+        let query = QueryFactory::get_permission_by_id(
+            "perm1".to_string(),
+        );
+
+        let result = handler.handle(query).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none()); // Permission doesn't exist
+    }
+
+    #[tokio::test]
+    async fn test_check_user_permission_query_handler_with_context() {
+        setup_test_env();
+
+        let role_repo = Arc::new(InMemoryRoleRepository::new());
+        let permission_repo = Arc::new(InMemoryPermissionRepository::new());
+        let abac_repo = Arc::new(InMemoryAbacPolicyRepository::new());
+
+        let handler = CheckUserPermissionQueryHandler::new(role_repo, permission_repo, abac_repo);
+
+        let mut context = HashMap::new();
+        context.insert("resource_type".to_string(), serde_json::Value::String("document".to_string()));
+        context.insert("user_department".to_string(), serde_json::Value::String("engineering".to_string()));
+
+        let query = QueryFactory::check_user_permission(
+            "user1".to_string(),
+            "read".to_string(),
+            Some(serde_json::Value::Object(context.into_iter().collect())),
+        );
+
+        let result = handler.handle(query).await;
+        assert!(result.is_ok());
+        assert!(!result.unwrap()); // Should return false for non-existent user
+    }
+}

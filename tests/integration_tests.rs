@@ -129,6 +129,8 @@ fn test_abac_router(state: Arc<AppState>) -> Router {
 async fn test_user_authentication_flow() {
     unsafe {
         std::env::set_var("JWT_SECRET", "test-secret-key-for-testing-only");
+        std::env::set_var("JWT_EXPIRATION", "1");
+        std::env::set_var("JWT_TIME_UNIT", "hours");
     }
     let state = create_app_state();
     let command = LoginUserCommand {
@@ -314,6 +316,8 @@ async fn test_abac_policy_management_flow() {
 async fn test_abac_policy_http_endpoints() {
     unsafe {
         std::env::set_var("JWT_SECRET", "test-secret-key-for-testing-only");
+        std::env::set_var("JWT_EXPIRATION", "1");
+        std::env::set_var("JWT_TIME_UNIT", "hours");
     }
     let state = create_app_state();
 

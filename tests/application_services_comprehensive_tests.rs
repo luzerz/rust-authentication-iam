@@ -27,7 +27,7 @@ async fn test_auth_service_comprehensive() {
     };
 
     let user_repo = Arc::new(InMemoryUserRepository::new(vec![user.clone()]));
-    
+
     // Test successful authentication using the new CQRS approach
     let command = authentication_service::application::commands::CommandFactory::authenticate_user(
         "test@example.com".to_string(),
@@ -194,6 +194,8 @@ async fn test_token_service_edge_cases() {
     // Set up test environment
     unsafe {
         std::env::set_var("JWT_SECRET", "test-secret-key-for-testing-only");
+        std::env::set_var("JWT_EXPIRATION", "1");
+        std::env::set_var("JWT_TIME_UNIT", "hours");
     }
 
     let token_service = TokenService;
@@ -298,6 +300,8 @@ fn test_password_reset_service_comprehensive() {
     // Set up test environment
     unsafe {
         std::env::set_var("JWT_SECRET", "test-secret-key-for-testing-only");
+        std::env::set_var("JWT_EXPIRATION", "1");
+        std::env::set_var("JWT_TIME_UNIT", "hours");
     }
 
     let reset_service = PasswordResetService;
