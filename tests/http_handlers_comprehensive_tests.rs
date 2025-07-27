@@ -26,7 +26,7 @@ fn create_test_user() -> User {
     User {
         id: "user1".to_string(),
         email: "test@example.com".to_string(),
-        password_hash: hash("password", DEFAULT_COST).unwrap(),
+        password_hash: hash("password", 4).unwrap(), // Use cost 4 for faster tests
         roles: vec!["admin".to_string()],
         is_locked: false,
         failed_login_attempts: 0,
@@ -38,7 +38,7 @@ fn create_user_without_permissions() -> User {
     User {
         id: "user-without-permissions".to_string(),
         email: "user-without-permissions@example.com".to_string(),
-        password_hash: hash("password", DEFAULT_COST).unwrap(),
+        password_hash: hash("password", 4).unwrap(), // Use cost 4 for faster tests
         roles: vec![], // No roles, so no permissions
         is_locked: false,
         failed_login_attempts: 0,

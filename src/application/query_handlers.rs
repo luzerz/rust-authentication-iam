@@ -921,7 +921,7 @@ mod tests {
         InMemoryAbacPolicyRepository, InMemoryPermissionGroupRepository, InMemoryPermissionRepository,
         InMemoryRoleRepository, InMemoryUserRepository,
     };
-    use bcrypt::DEFAULT_COST;
+
     use std::collections::HashMap;
     use std::sync::Arc;
 
@@ -935,7 +935,7 @@ mod tests {
     async fn test_get_user_by_id_query_handler_success() {
         setup_test_env();
 
-        let password_hash = bcrypt::hash("password123", DEFAULT_COST).unwrap();
+        let password_hash = bcrypt::hash("password123", 4).unwrap(); // Use cost 4 for faster tests
         let user = User {
             id: "user1".to_string(),
             email: "test@example.com".to_string(),

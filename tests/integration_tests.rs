@@ -18,7 +18,7 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
-use bcrypt::{DEFAULT_COST, hash};
+use bcrypt::hash;
 use chrono::Utc;
 use serde_json::json;
 use std::sync::Arc;
@@ -61,7 +61,7 @@ fn create_test_user() -> User {
     User {
         id: "user1".to_string(),
         email: "test@example.com".to_string(),
-        password_hash: hash("password", DEFAULT_COST).unwrap(),
+        password_hash: hash("password", 4).unwrap(), // Use cost 4 for faster tests
         roles: vec!["user".to_string()],
         is_locked: false,
         failed_login_attempts: 0,

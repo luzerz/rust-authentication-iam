@@ -264,7 +264,7 @@ mod tests {
         }
 
         // Create a user for testing
-        let password_hash = bcrypt::hash("password123", bcrypt::DEFAULT_COST).unwrap();
+        let password_hash = bcrypt::hash("password123", 4).unwrap(); // Use cost 4 for faster tests
         let user = crate::domain::user::User {
             id: "user1".to_string(),
             email: "test@example.com".to_string(),

@@ -2806,3 +2806,1049 @@ pub async fn update_permission_handler(
             .into_response(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::application::{
+        command_bus::CommandBus,
+        query_bus::QueryBus,
+        services::{AuthorizationService, PasswordResetService, PasswordService, TokenService},
+    };
+    use crate::domain::user::User;
+    use crate::infrastructure::{
+        InMemoryAbacPolicyRepository, InMemoryPermissionGroupRepository,
+        InMemoryPermissionRepository, InMemoryRefreshTokenRepository, InMemoryRoleRepository,
+        InMemoryUserRepository,
+    };
+    use axum::{
+        Router,
+        body::Body,
+        http::{Request, StatusCode},
+        routing::{get, post, put, delete},
+    };
+    use bcrypt::{DEFAULT_COST, hash};
+    use serde_json::json;
+    use std::sync::Arc;
+    use tower::ServiceExt;
+
+    fn setup_test_env() {
+        unsafe {
+            std::env::set_var("JWT_SECRET", "test-secret-key-for-testing-only");
+            std::env::set_var("JWT_EXPIRATION", "1");
+            std::env::set_var("JWT_TIME_UNIT", "hours");
+        }
+    }
+
+    async fn create_test_app_state() -> Arc<AppState> {
+        setup_test_env();
+
+        // Create test user
+        let password_hash = hash("password", DEFAULT_COST).unwrap();
+        let test_user = User {
+            id: "user1".to_string(),
+            email: "test@example.com".to_string(),
+            password_hash,
+            roles: vec!["admin".to_string()],
+            is_locked: false,
+            failed_login_attempts: 0,
+        };
+
+        let user_repo = Arc::new(InMemoryUserRepository::new(vec![test_user]));
+        let refresh_token_repo = Arc::new(InMemoryRefreshTokenRepository::new());
+        let role_repo = Arc::new(InMemoryRoleRepository::new());
+        let permission_repo = Arc::new(InMemoryPermissionRepository::new());
+        let abac_policy_repo = Arc::new(InMemoryAbacPolicyRepository::new());
+        let permission_group_repo = Arc::new(InMemoryPermissionGroupRepository::new());
+
+        let token_service = Arc::new(TokenService);
+        let password_service = Arc::new(PasswordService);
+        let password_reset_service = Arc::new(PasswordResetService);
+        let authorization_service = Arc::new(AuthorizationService);
+
+        let command_bus = Arc::new(CommandBus::new());
+        let query_bus = Arc::new(QueryBus::new());
+
+        // Register command handlers
+        command_bus
+            .register_handler::<crate::application::commands::AuthenticateUserCommand, _>(
+                crate::application::command_handlers::AuthenticateUserCommandHandler::new(
+                    user_repo.clone(),
+                ),
+            )
+            .await;
+
+        command_bus
+            .register_handler::<crate::application::commands::CreateUserCommand, _>(
+                crate::application::command_handlers::CreateUserCommandHandler::new(
+                    user_repo.clone(),
+                    role_repo.clone(),
+                ),
+            )
+            .await;
+
+        command_bus
+            .register_handler::<crate::application::commands::ChangePasswordCommand, _>(
+                crate::application::command_handlers::ChangePasswordCommandHandler::new(
+                    user_repo.clone(),
+                ),
+            )
+            .await;
+
+        // Register query handlers
+        query_bus
+            .register_handler::<crate::application::queries::CheckPermissionQuery, _>(
+                crate::application::query_handlers::CheckPermissionQueryHandler::new(
+                    role_repo.clone(),
+                    permission_repo.clone(),
+                    abac_policy_repo.clone(),
+                ),
+            )
+            .await;
+
+        query_bus
+            .register_handler::<crate::application::queries::ListRolesQuery, _>(
+                crate::application::query_handlers::ListRolesQueryHandler::new(
+                    role_repo.clone(),
+                    permission_repo.clone(),
+                ),
+            )
+            .await;
+
+        query_bus
+            .register_handler::<crate::application::queries::ListPermissionsQuery, _>(
+                crate::application::query_handlers::ListPermissionsQueryHandler::new(
+                    permission_repo.clone(),
+                    permission_group_repo.clone(),
+                ),
+            )
+            .await;
+
+        query_bus
+            .register_handler::<crate::application::queries::GetUserByIdQuery, _>(
+                crate::application::query_handlers::GetUserByIdQueryHandler::new(
+                    user_repo.clone(),
+                    role_repo.clone(),
+                    permission_repo.clone(),
+                ),
+            )
+            .await;
+
+        Arc::new(AppState {
+            user_repo,
+            role_repo,
+            permission_repo,
+            permission_group_repo,
+            abac_policy_repo,
+            refresh_token_repo,
+            token_service,
+            password_service,
+            password_reset_service,
+            authorization_service,
+            command_bus,
+            query_bus,
+        })
+    }
+
+    fn create_test_router(state: Arc<AppState>) -> Router {
+        Router::new()
+            // Auth routes
+            .route("/auth/login", post(login_handler))
+            .route("/auth/register", post(register_user_handler))
+            .route("/auth/validate-token", post(validate_token_handler))
+            .route("/auth/refresh-token", post(refresh_token_handler))
+            .route("/auth/logout", post(logout_handler))
+            .route("/auth/password-change", post(change_password_handler))
+            .route("/auth/password-reset", post(request_password_reset_handler))
+            .route("/auth/password-reset-confirm", post(confirm_password_reset_handler))
+            // RBAC routes
+            .route("/rbac/roles", post(create_role_handler))
+            .route("/rbac/roles", get(list_roles_handler))
+            .route("/rbac/roles/{role_id}", get(get_role_handler))
+            .route("/rbac/roles/{role_id}", put(update_role_handler))
+            .route("/rbac/roles/{role_id}", delete(delete_role_handler))
+            .route("/rbac/roles/assign", post(assign_role_handler))
+            .route("/rbac/roles/remove", post(remove_role_handler))
+            .route("/rbac/roles/{role_id}/parent", put(set_parent_role_handler))
+            .route("/rbac/roles/{role_id}/hierarchy", get(get_role_hierarchy_handler))
+            .route("/rbac/roles/hierarchy", post(create_role_hierarchy_handler))
+            .route("/rbac/roles/hierarchies", get(list_role_hierarchies_handler))
+            .route("/rbac/roles/{role_id}/permissions", get(list_role_permissions_handler))
+            .route("/rbac/permissions", post(create_permission_handler))
+            .route("/rbac/permissions", get(list_permissions_handler))
+            .route("/rbac/permissions/{permission_id}", get(get_permission_handler))
+            .route("/rbac/permissions/{permission_id}", put(update_permission_handler))
+            .route("/rbac/permissions/{permission_id}", delete(delete_permission_handler))
+            .route("/rbac/permissions/assign", post(assign_permission_handler))
+            .route("/rbac/permissions/remove", post(remove_permission_handler))
+            // User management routes
+            .route("/users/{user_id}/roles", get(list_user_roles_handler))
+            .route("/users/{user_id}/effective-permissions", get(get_effective_permissions_handler))
+            // ABAC routes
+            .route("/abac/policies", post(create_abac_policy_handler))
+            .route("/abac/policies", get(list_abac_policies_handler))
+            .route("/abac/policies/{policy_id}", put(update_abac_policy_handler))
+            .route("/abac/policies/{policy_id}", delete(delete_abac_policy_handler))
+            .route("/abac/policies/assign", post(assign_abac_policy_handler))
+            .route("/abac/evaluate", post(evaluate_abac_policies_handler))
+            // Permission groups routes
+            .route("/permission-groups", post(create_permission_group_handler))
+            .route("/permission-groups", get(list_permission_groups_handler))
+            .route("/permission-groups/{group_id}", get(get_permission_group_handler))
+            .route("/permission-groups/{group_id}", put(update_permission_group_handler))
+            .route("/permission-groups/{group_id}", delete(delete_permission_group_handler))
+            .route("/permission-groups/{group_id}/permissions", get(get_permissions_in_group_handler))
+            .with_state(state)
+    }
+
+    #[tokio::test]
+    async fn test_login_handler_success() {
+        let state = create_test_app_state().await;
+        let app = create_test_router(state);
+
+        let payload = json!({
+            "email": "test@example.com",
+            "password": "password"
+        });
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/auth/login")
+            .header("content-type", "application/json")
+            .body(Body::from(payload.to_string()))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_login_handler_invalid_credentials() {
+        let state = create_test_app_state().await;
+        let app = create_test_router(state);
+
+        let payload = json!({
+            "email": "test@example.com",
+            "password": "wrongpassword"
+        });
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/auth/login")
+            .header("content-type", "application/json")
+            .body(Body::from(payload.to_string()))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_register_user_handler_success() {
+        let state = create_test_app_state().await;
+        let app = create_test_router(state);
+
+        let payload = json!({
+            "email": "newuser@example.com",
+            "password": "newpassword"
+        });
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/auth/register")
+            .header("content-type", "application/json")
+            .body(Body::from(payload.to_string()))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+    }
+
+    #[tokio::test]
+    async fn test_validate_token_handler_success() {
+        let state = create_test_app_state().await;
+        let app = create_test_router(state);
+
+        let payload = json!({
+            "token": "invalid-token"
+        });
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/auth/validate-token")
+            .header("content-type", "application/json")
+            .body(Body::from(payload.to_string()))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_refresh_token_handler_invalid_token() {
+        let state = create_test_app_state().await;
+        let app = create_test_router(state);
+
+        let payload = json!({
+            "refresh_token": "invalid-refresh-token"
+        });
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/auth/refresh-token")
+            .header("content-type", "application/json")
+            .body(Body::from(payload.to_string()))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_logout_handler_invalid_token() {
+        let state = create_test_app_state().await;
+        let app = create_test_router(state);
+
+        let payload = json!({
+            "refresh_token": "invalid-refresh-token"
+        });
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/auth/logout")
+            .header("content-type", "application/json")
+            .body(Body::from(payload.to_string()))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_request_password_reset_handler() {
+        let state = create_test_app_state().await;
+        let app = create_test_router(state);
+
+        let payload = json!({
+            "email": "test@example.com"
+        });
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/auth/password-reset")
+            .header("content-type", "application/json")
+            .body(Body::from(payload.to_string()))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_confirm_password_reset_handler() {
+        let state = create_test_app_state().await;
+        let app = create_test_router(state);
+
+        let payload = json!({
+            "token": "invalid-reset-token",
+            "new_password": "newpassword"
+        });
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/auth/password-reset-confirm")
+            .header("content-type", "application/json")
+            .body(Body::from(payload.to_string()))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[tokio::test]
+    async fn test_list_roles_handler() {
+        let state = create_test_app_state().await;
+        let app = create_test_router(state);
+
+        let request = Request::builder()
+            .method("GET")
+            .uri("/rbac/roles")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_list_permissions_handler() {
+        let state = create_test_app_state().await;
+        let app = create_test_router(state);
+
+        let request = Request::builder()
+            .method("GET")
+            .uri("/rbac/permissions")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_list_abac_policies_handler() {
+        let state = create_test_app_state().await;
+        let app = create_test_router(state);
+
+        let request = Request::builder()
+            .method("GET")
+            .uri("/abac/policies")
+            .header("x-user-id", "user1")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_list_permission_groups_handler() {
+        let state = create_test_app_state().await;
+        let app = create_test_router(state);
+
+        let request = Request::builder()
+            .method("GET")
+            .uri("/permission-groups")
+            .header("x-user-id", "user1")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[tokio::test]
+    async fn test_list_role_hierarchies_handler() {
+        let state = create_test_app_state().await;
+        let app = create_test_router(state);
+
+        let request = Request::builder()
+            .method("GET")
+            .uri("/rbac/roles/hierarchies")
+            .header("x-user-id", "user1")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_get_role_handler() {
+        let state = create_test_app_state().await;
+        let app = create_test_router(state);
+
+        let request = Request::builder()
+            .method("GET")
+            .uri("/rbac/roles/test-role")
+            .header("x-user-id", "user1")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_get_permission_handler() {
+        let state = create_test_app_state().await;
+        let app = create_test_router(state);
+
+        let request = Request::builder()
+            .method("GET")
+            .uri("/rbac/permissions/test-permission")
+            .header("x-user-id", "user1")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_get_permission_group_handler() {
+        let state = create_test_app_state().await;
+        let app = create_test_router(state);
+
+        let request = Request::builder()
+            .method("GET")
+            .uri("/permission-groups/test-group")
+            .header("x-user-id", "user1")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[tokio::test]
+    async fn test_get_role_hierarchy_handler() {
+        let state = create_test_app_state().await;
+        let app = create_test_router(state);
+
+        let request = Request::builder()
+            .method("GET")
+            .uri("/rbac/roles/test-role/hierarchy")
+            .header("x-user-id", "user1")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_list_role_permissions_handler() {
+        let state = create_test_app_state().await;
+        let app = create_test_router(state);
+
+        let request = Request::builder()
+            .method("GET")
+            .uri("/rbac/roles/test-role/permissions")
+            .header("x-user-id", "user1")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_list_user_roles_handler() {
+        let state = create_test_app_state().await;
+        let app = create_test_router(state);
+
+        let request = Request::builder()
+            .method("GET")
+            .uri("/users/user1/roles")
+            .header("x-user-id", "user1")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_get_effective_permissions_handler() {
+        let state = create_test_app_state().await;
+        let app = create_test_router(state);
+
+        let request = Request::builder()
+            .method("GET")
+            .uri("/users/user1/effective-permissions")
+            .header("x-user-id", "user1")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_get_permissions_in_group_handler() {
+        let state = create_test_app_state().await;
+        let app = create_test_router(state);
+
+        let request = Request::builder()
+            .method("GET")
+            .uri("/permission-groups/test-group/permissions")
+            .header("x-user-id", "user1")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[tokio::test]
+    async fn test_create_role_handler_unauthorized() {
+        let state = create_test_app_state().await;
+        let app = create_test_router(state);
+
+        let payload = json!({
+            "name": "test-role"
+        });
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/rbac/roles")
+            .header("content-type", "application/json")
+            .header("x-user-id", "user1")
+            .header("authorization", "Bearer invalid-token")
+            .body(Body::from(payload.to_string()))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_create_permission_handler_unauthorized() {
+        let state = create_test_app_state().await;
+        let app = create_test_router(state);
+
+        let payload = json!({
+            "name": "test:permission"
+        });
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/rbac/permissions")
+            .header("content-type", "application/json")
+            .header("x-user-id", "user1")
+            .body(Body::from(payload.to_string()))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_create_abac_policy_handler_unauthorized() {
+        let state = create_test_app_state().await;
+        let app = create_test_router(state);
+
+        let payload = json!({
+            "name": "test-policy",
+            "effect": "Allow",
+            "conditions": [
+                {
+                    "attribute": "user.role",
+                    "operator": "equals",
+                    "value": "admin"
+                }
+            ],
+            "priority": 100,
+            "conflict_resolution": "deny_overrides"
+        });
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/abac/policies")
+            .header("content-type", "application/json")
+            .header("x-user-id", "user1")
+            .body(Body::from(payload.to_string()))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_create_permission_group_handler_unauthorized() {
+        let state = create_test_app_state().await;
+        let app = create_test_router(state);
+
+        let payload = json!({
+            "name": "test-group",
+            "description": "Test permission group",
+            "category": "test",
+            "metadata": {
+                "version": "1.0"
+            }
+        });
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/permission-groups")
+            .header("content-type", "application/json")
+            .header("x-user-id", "user1")
+            .body(Body::from(payload.to_string()))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[tokio::test]
+    async fn test_assign_role_handler_unauthorized() {
+        let state = create_test_app_state().await;
+        let app = create_test_router(state);
+
+        let payload = json!({
+            "user_id": "user1",
+            "role_id": "test-role"
+        });
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/rbac/roles/assign")
+            .header("content-type", "application/json")
+            .header("x-user-id", "user1")
+            .header("authorization", "Bearer invalid-token")
+            .body(Body::from(payload.to_string()))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_assign_permission_handler_unauthorized() {
+        let state = create_test_app_state().await;
+        let app = create_test_router(state);
+
+        let payload = json!({
+            "role_id": "test-role",
+            "permission_id": "test-permission"
+        });
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/rbac/permissions/assign")
+            .header("content-type", "application/json")
+            .header("x-user-id", "user1")
+            .header("authorization", "Bearer invalid-token")
+            .body(Body::from(payload.to_string()))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_assign_abac_policy_handler_unauthorized() {
+        let state = create_test_app_state().await;
+        let app = create_test_router(state);
+
+        let payload = json!({
+            "target_type": "user",
+            "target_id": "user1",
+            "policy_id": "test-policy"
+        });
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/abac/policies/assign")
+            .header("content-type", "application/json")
+            .header("x-user-id", "user1")
+            .header("authorization", "Bearer invalid-token")
+            .body(Body::from(payload.to_string()))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_evaluate_abac_policies_handler() {
+        let state = create_test_app_state().await;
+        let app = create_test_router(state);
+
+        let payload = json!({
+            "user_id": "user1",
+            "permission_name": "read:resource",
+            "attributes": {
+                "user.role": "admin",
+                "resource.type": "document"
+            }
+        });
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/abac/evaluate")
+            .header("content-type", "application/json")
+            .header("x-user-id", "user1")
+            .body(Body::from(payload.to_string()))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_delete_role_handler_unauthorized() {
+        let state = create_test_app_state().await;
+        let app = create_test_router(state);
+
+        let request = Request::builder()
+            .method("DELETE")
+            .uri("/rbac/roles/test-role")
+            .header("x-user-id", "user1")
+            .header("authorization", "Bearer invalid-token")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_delete_permission_handler_unauthorized() {
+        let state = create_test_app_state().await;
+        let app = create_test_router(state);
+
+        let request = Request::builder()
+            .method("DELETE")
+            .uri("/rbac/permissions/test-permission")
+            .header("x-user-id", "user1")
+            .header("authorization", "Bearer invalid-token")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_delete_abac_policy_handler_unauthorized() {
+        let state = create_test_app_state().await;
+        let app = create_test_router(state);
+
+        let request = Request::builder()
+            .method("DELETE")
+            .uri("/abac/policies/test-policy")
+            .header("x-user-id", "user1")
+            .header("authorization", "Bearer invalid-token")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_delete_permission_group_handler_unauthorized() {
+        let state = create_test_app_state().await;
+        let app = create_test_router(state);
+
+        let request = Request::builder()
+            .method("DELETE")
+            .uri("/permission-groups/test-group")
+            .header("x-user-id", "user1")
+            .header("authorization", "Bearer invalid-token")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[tokio::test]
+    async fn test_remove_role_handler_unauthorized() {
+        let state = create_test_app_state().await;
+        let app = create_test_router(state);
+
+        let payload = json!({
+            "user_id": "user1",
+            "role_id": "test-role"
+        });
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/rbac/roles/remove")
+            .header("content-type", "application/json")
+            .header("x-user-id", "user1")
+            .header("authorization", "Bearer invalid-token")
+            .body(Body::from(payload.to_string()))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_remove_permission_handler_unauthorized() {
+        let state = create_test_app_state().await;
+        let app = create_test_router(state);
+
+        let payload = json!({
+            "role_id": "test-role",
+            "permission_id": "test-permission"
+        });
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/rbac/permissions/remove")
+            .header("content-type", "application/json")
+            .header("x-user-id", "user1")
+            .header("authorization", "Bearer invalid-token")
+            .body(Body::from(payload.to_string()))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_set_parent_role_handler_unauthorized() {
+        let state = create_test_app_state().await;
+        let app = create_test_router(state);
+
+        let payload = json!({
+            "parent_role_id": "parent-role"
+        });
+
+        let request = Request::builder()
+            .method("PUT")
+            .uri("/rbac/roles/test-role/parent")
+            .header("content-type", "application/json")
+            .header("x-user-id", "user1")
+            .header("authorization", "Bearer invalid-token")
+            .body(Body::from(payload.to_string()))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[tokio::test]
+    async fn test_create_role_hierarchy_handler_unauthorized() {
+        let state = create_test_app_state().await;
+        let app = create_test_router(state);
+
+        let payload = json!({
+            "parent_role_id": "parent-role",
+            "child_role_id": "child-role"
+        });
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/rbac/roles/hierarchy")
+            .header("content-type", "application/json")
+            .header("x-user-id", "user1")
+            .header("authorization", "Bearer invalid-token")
+            .body(Body::from(payload.to_string()))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_update_role_handler_unauthorized() {
+        let state = create_test_app_state().await;
+        let app = create_test_router(state);
+
+        let payload = json!({
+            "name": "updated-role"
+        });
+
+        let request = Request::builder()
+            .method("PUT")
+            .uri("/rbac/roles/test-role")
+            .header("content-type", "application/json")
+            .header("x-user-id", "user1")
+            .header("authorization", "Bearer invalid-token")
+            .body(Body::from(payload.to_string()))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_update_permission_handler_unauthorized() {
+        let state = create_test_app_state().await;
+        let app = create_test_router(state);
+
+        let payload = json!({
+            "name": "updated:permission"
+        });
+
+        let request = Request::builder()
+            .method("PUT")
+            .uri("/rbac/permissions/test-permission")
+            .header("content-type", "application/json")
+            .header("x-user-id", "user1")
+            .header("authorization", "Bearer invalid-token")
+            .body(Body::from(payload.to_string()))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_update_abac_policy_handler_unauthorized() {
+        let state = create_test_app_state().await;
+        let app = create_test_router(state);
+
+        let payload = json!({
+            "name": "updated-policy",
+            "effect": "Deny",
+            "conditions": [
+                {
+                    "attribute": "user.role",
+                    "operator": "equals",
+                    "value": "user"
+                }
+            ],
+            "priority": 200,
+            "conflict_resolution": "allow_overrides"
+        });
+
+        let request = Request::builder()
+            .method("PUT")
+            .uri("/abac/policies/test-policy")
+            .header("content-type", "application/json")
+            .header("x-user-id", "user1")
+            .header("authorization", "Bearer invalid-token")
+            .body(Body::from(payload.to_string()))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_update_permission_group_handler_unauthorized() {
+        let state = create_test_app_state().await;
+        let app = create_test_router(state);
+
+        let payload = json!({
+            "name": "updated-group",
+            "description": "Updated permission group",
+            "category": "updated",
+            "metadata": {
+                "version": "2.0"
+            }
+        });
+
+        let request = Request::builder()
+            .method("PUT")
+            .uri("/permission-groups/test-group")
+            .header("content-type", "application/json")
+            .header("x-user-id", "user1")
+            .header("authorization", "Bearer invalid-token")
+            .body(Body::from(payload.to_string()))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[tokio::test]
+    async fn test_change_password_handler_unauthorized() {
+        let state = create_test_app_state().await;
+        let app = create_test_router(state);
+
+        let payload = json!({
+            "current_password": "password",
+            "new_password": "newpassword"
+        });
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/auth/password-change")
+            .header("content-type", "application/json")
+            .header("x-user-id", "user1")
+            .header("authorization", "Bearer invalid-token")
+            .body(Body::from(payload.to_string()))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+}

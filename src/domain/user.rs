@@ -75,10 +75,10 @@ impl User {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bcrypt::{DEFAULT_COST, hash};
+    use bcrypt::hash;
 
     fn create_test_user() -> User {
-        let password_hash = hash("password123", DEFAULT_COST).unwrap();
+        let password_hash = hash("password123", 4).unwrap(); // Use cost 4 for faster tests
         User {
             id: "user1".to_string(),
             email: "test@example.com".to_string(),

@@ -1431,7 +1431,7 @@ mod tests {
     async fn test_authenticate_user_command_handler_success() {
         setup_test_env();
         
-        let password_hash = bcrypt::hash("password123", bcrypt::DEFAULT_COST).unwrap();
+        let password_hash = bcrypt::hash("password123", 4).unwrap(); // Use cost 4 for faster tests
         let user = User {
             id: "user1".to_string(),
             email: "test@example.com".to_string(),
@@ -1481,7 +1481,7 @@ mod tests {
     async fn test_authenticate_user_command_handler_locked_account() {
         setup_test_env();
         
-        let password_hash = bcrypt::hash("password123", bcrypt::DEFAULT_COST).unwrap();
+        let password_hash = bcrypt::hash("password123", 4).unwrap(); // Use cost 4 for faster tests
         let user = User {
             id: "user1".to_string(),
             email: "test@example.com".to_string(),
@@ -1511,7 +1511,7 @@ mod tests {
     async fn test_authenticate_user_command_handler_invalid_password() {
         setup_test_env();
         
-        let password_hash = bcrypt::hash("password123", bcrypt::DEFAULT_COST).unwrap();
+        let password_hash = bcrypt::hash("password123", 4).unwrap(); // Use cost 4 for faster tests
         let user = User {
             id: "user1".to_string(),
             email: "test@example.com".to_string(),
@@ -1620,7 +1620,7 @@ mod tests {
         let user = User {
             id: "user1".to_string(),
             email: "test@example.com".to_string(),
-            password_hash: bcrypt::hash("password123", bcrypt::DEFAULT_COST).unwrap(),
+            password_hash: bcrypt::hash("password123", 4).unwrap(), // Use cost 4 for faster tests
             roles: vec![],
             is_locked: false,
             failed_login_attempts: 0,
@@ -1666,7 +1666,7 @@ mod tests {
     async fn test_change_password_command_handler() {
         setup_test_env();
         
-        let password_hash = bcrypt::hash("oldpassword", bcrypt::DEFAULT_COST).unwrap();
+        let password_hash = bcrypt::hash("oldpassword", 4).unwrap(); // Use cost 4 for faster tests
         let user = User {
             id: "user1".to_string(),
             email: "test@example.com".to_string(),
