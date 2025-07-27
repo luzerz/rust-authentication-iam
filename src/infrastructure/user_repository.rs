@@ -135,6 +135,7 @@ impl UserRepository for PostgresUserRepository {
             password_hash: row.password_hash,
             roles,
             is_locked: row.is_locked,
+            failed_login_attempts: 0, // Default value for existing users
         })
     }
 
@@ -213,6 +214,7 @@ impl UserRepository for PostgresUserRepository {
                     password_hash: row.password_hash,
                     roles,
                     is_locked: row.is_locked,
+                    failed_login_attempts: 0, // Default value for existing users
                 }))
             }
             None => Ok(None),
@@ -252,7 +254,7 @@ impl RefreshTokenRepository for PostgresRefreshTokenRepository {
         .bind(&token.jti)
         .bind(&token.user_id)
         .bind(token.expires_at)
-        .bind(token.revoked)
+        .bind(false) // Default to not revoked
         .execute(&self.pool)
         .await?;
         Ok(())

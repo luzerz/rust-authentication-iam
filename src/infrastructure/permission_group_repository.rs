@@ -16,6 +16,7 @@ pub trait PermissionGroupRepository: Send + Sync {
         &self,
         group_id: &str,
     ) -> RepoResult<Vec<crate::domain::permission::Permission>>;
+    async fn get_permission_count(&self, group_id: &str) -> RepoResult<usize>;
 }
 
 #[derive(Debug, Clone)]
@@ -181,7 +182,7 @@ impl PermissionGroupRepository for PostgresPermissionGroupRepository {
             r#"
             SELECT id, name, description, group_id, metadata, is_active
             FROM permissions
-            WHERE group_id = $1
+            WHERE group_id = $1 AND is_active = true
             ORDER BY name
             "#,
             group_id
@@ -203,19 +204,43 @@ impl PermissionGroupRepository for PostgresPermissionGroupRepository {
 
         Ok(permissions)
     }
+
+    #[instrument]
+    async fn get_permission_count(&self, group_id: &str) -> RepoResult<usize> {
+        let count = sqlx::query!(
+            r#"
+            SELECT COUNT(*) as count
+            FROM permissions
+            WHERE group_id = $1 AND is_active = true
+            "#,
+            group_id
+        )
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(count.count.unwrap_or(0) as usize)
+    }
 }
 
 // In-memory implementation for testing
 #[derive(Debug)]
 pub struct InMemoryPermissionGroupRepository {
     groups: std::sync::Mutex<std::collections::HashMap<String, PermissionGroup>>,
+    permissions:
+        std::sync::Mutex<std::collections::HashMap<String, crate::domain::permission::Permission>>,
 }
 
 impl InMemoryPermissionGroupRepository {
     pub fn new() -> Self {
         Self {
             groups: std::sync::Mutex::new(std::collections::HashMap::new()),
+            permissions: std::sync::Mutex::new(std::collections::HashMap::new()),
         }
+    }
+
+    pub fn add_permission(&self, permission: crate::domain::permission::Permission) {
+        let mut permissions = self.permissions.lock().unwrap();
+        permissions.insert(permission.id.clone(), permission);
     }
 }
 
@@ -227,20 +252,17 @@ impl Default for InMemoryPermissionGroupRepository {
 
 #[async_trait]
 impl PermissionGroupRepository for InMemoryPermissionGroupRepository {
-    #[instrument]
     async fn create_group(&self, group: PermissionGroup) -> RepoResult<PermissionGroup> {
         let mut groups = self.groups.lock().unwrap();
         groups.insert(group.id.clone(), group.clone());
         Ok(group)
     }
 
-    #[instrument]
     async fn get_group(&self, group_id: &str) -> RepoResult<Option<PermissionGroup>> {
         let groups = self.groups.lock().unwrap();
         Ok(groups.get(group_id).cloned())
     }
 
-    #[instrument]
     async fn list_groups(&self) -> RepoResult<Vec<PermissionGroup>> {
         let groups = self.groups.lock().unwrap();
         let mut result: Vec<PermissionGroup> = groups.values().cloned().collect();
@@ -248,7 +270,6 @@ impl PermissionGroupRepository for InMemoryPermissionGroupRepository {
         Ok(result)
     }
 
-    #[instrument]
     async fn list_groups_by_category(&self, category: &str) -> RepoResult<Vec<PermissionGroup>> {
         let groups = self.groups.lock().unwrap();
         let mut result: Vec<PermissionGroup> = groups
@@ -260,27 +281,37 @@ impl PermissionGroupRepository for InMemoryPermissionGroupRepository {
         Ok(result)
     }
 
-    #[instrument]
     async fn update_group(&self, group: &PermissionGroup) -> RepoResult<()> {
         let mut groups = self.groups.lock().unwrap();
         groups.insert(group.id.clone(), group.clone());
         Ok(())
     }
 
-    #[instrument]
     async fn delete_group(&self, group_id: &str) -> RepoResult<()> {
         let mut groups = self.groups.lock().unwrap();
         groups.remove(group_id);
         Ok(())
     }
 
-    #[instrument]
     async fn get_permissions_in_group(
         &self,
-        _group_id: &str,
+        group_id: &str,
     ) -> RepoResult<Vec<crate::domain::permission::Permission>> {
-        // In-memory implementation would need access to permissions
-        // For now, return empty vector
-        Ok(vec![])
+        let permissions = self.permissions.lock().unwrap();
+        let mut result: Vec<crate::domain::permission::Permission> = permissions
+            .values()
+            .filter(|p| p.group_id == Some(group_id.to_string()))
+            .cloned()
+            .collect();
+        result.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(result)
+    }
+
+    async fn get_permission_count(&self, group_id: &str) -> RepoResult<usize> {
+        let permissions = self.permissions.lock().unwrap();
+        Ok(permissions
+            .values()
+            .filter(|p| p.group_id == Some(group_id.to_string()))
+            .count())
     }
 }

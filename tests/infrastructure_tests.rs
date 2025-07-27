@@ -20,6 +20,7 @@ async fn test_in_memory_user_repository_find_by_email() {
         password_hash,
         roles: vec![],
         is_locked: false,
+        failed_login_attempts: 0,
     };
     let repo = InMemoryUserRepository::new(vec![user.clone()]);
     let found = repo.find_by_email("user@example.com").await;
@@ -35,8 +36,7 @@ async fn test_in_memory_refresh_token_repository() {
     let token = authentication_service::application::services::RefreshToken {
         jti: "token1".to_string(),
         user_id: "user1".to_string(),
-        expires_at: chrono::Utc::now().naive_utc(),
-        revoked: false,
+        expires_at: chrono::Utc::now(),
     };
     assert!(!repo.is_valid("token1").await.unwrap());
     repo.insert(token).await.unwrap();

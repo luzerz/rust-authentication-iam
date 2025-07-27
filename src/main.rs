@@ -1,6 +1,52 @@
-use authentication_service::application::handlers::LoginUserHandler;
-use authentication_service::application::services::AuthZService;
-use authentication_service::application::services::{AuthService, PasswordService, TokenService};
+use authentication_service::application::{
+    command_bus::CommandBus,
+    command_handlers::{
+        AssignAbacPolicyToUserCommandHandler, AssignPermissionsToRoleCommandHandler,
+        AssignRolesCommandHandler, AuthenticateUserCommandHandler, ChangePasswordCommandHandler,
+        CreateAbacPolicyCommandHandler, CreatePermissionCommandHandler,
+        CreatePermissionGroupCommandHandler, CreateRoleCommandHandler, CreateUserCommandHandler,
+        DeleteAbacPolicyCommandHandler, DeletePermissionCommandHandler,
+        DeletePermissionGroupCommandHandler, DeleteRoleCommandHandler,
+        EvaluateAbacPoliciesCommandHandler, LogoutCommandHandler, RefreshTokenCommandHandler,
+        RemovePermissionsFromRoleCommandHandler, RemoveRolesFromUserCommandHandler,
+        ResetPasswordCommandHandler, SetParentRoleCommandHandler, ToggleUserLockCommandHandler,
+        UpdateAbacPolicyCommandHandler, UpdatePermissionCommandHandler,
+        UpdatePermissionGroupCommandHandler, UpdateRoleCommandHandler,
+        UpdateUserProfileCommandHandler, ValidateTokenCommandHandler,
+    },
+    commands::{
+        AssignAbacPolicyToUserCommand, AssignPermissionsToRoleCommand, AssignRolesCommand,
+        AuthenticateUserCommand, ChangePasswordCommand, CreateAbacPolicyCommand,
+        CreatePermissionCommand, CreatePermissionGroupCommand, CreateRoleCommand,
+        CreateUserCommand, DeleteAbacPolicyCommand, DeletePermissionCommand,
+        DeletePermissionGroupCommand, DeleteRoleCommand, EvaluateAbacPoliciesCommand,
+        LogoutCommand, RefreshTokenCommand, RemovePermissionsFromRoleCommand,
+        RemoveRolesFromUserCommand, ResetPasswordCommand, SetParentRoleCommand,
+        ToggleUserLockCommand, UpdateAbacPolicyCommand, UpdatePermissionCommand,
+        UpdatePermissionGroupCommand, UpdateRoleCommand, UpdateUserProfileCommand,
+        ValidateTokenCommand,
+    },
+    queries::{
+        CheckPermissionQuery, CheckUserPermissionQuery, GetPermissionByIdQuery,
+        GetPermissionGroupQuery, GetPermissionsForUserQuery, GetPermissionsInGroupQuery,
+        GetRoleByIdQuery, GetRoleHierarchyQuery, GetRolePermissionsQuery, GetRolesForUserQuery,
+        GetUserAuditEventsQuery, GetUserByIdQuery, ListAbacPoliciesQuery,
+        ListPermissionGroupsQuery, ListPermissionsQuery, ListRoleHierarchiesQuery, ListRolesQuery,
+        ListUsersQuery,
+    },
+    query_bus::QueryBus,
+    query_handlers::{
+        CheckPermissionQueryHandler, CheckUserPermissionQueryHandler,
+        GetPermissionByIdQueryHandler, GetPermissionGroupQueryHandler,
+        GetPermissionsForUserQueryHandler, GetPermissionsInGroupQueryHandler,
+        GetRoleByIdQueryHandler, GetRoleHierarchyQueryHandler, GetRolePermissionsQueryHandler,
+        GetRolesForUserQueryHandler, GetUserAuditEventsQueryHandler, GetUserByIdQueryHandler,
+        ListAbacPoliciesQueryHandler, ListPermissionGroupsQueryHandler,
+        ListPermissionsQueryHandler, ListRoleHierarchiesQueryHandler, ListRolesQueryHandler,
+        ListUsersQueryHandler,
+    },
+    services::{AuthorizationService, PasswordResetService, PasswordService, TokenService},
+};
 use authentication_service::infrastructure::{
     AbacPolicyRepository, PermissionGroupRepository, PermissionRepository,
     PostgresAbacPolicyRepository, PostgresPermissionGroupRepository, PostgresPermissionRepository,
@@ -53,6 +99,7 @@ use authentication_service::interface::{
     create_permission_group_handler,
     create_permission_handler,
     create_role_handler,
+    create_role_hierarchy_handler,
     delete_abac_policy_handler,
     delete_permission_group_handler,
     delete_permission_handler,
@@ -60,7 +107,9 @@ use authentication_service::interface::{
     evaluate_abac_policies_handler,
     get_effective_permissions_handler,
     get_permission_group_handler,
+    get_permission_handler,
     get_permissions_in_group_handler,
+    get_role_handler,
     get_role_hierarchy_handler,
     list_abac_policies_handler,
     list_permission_groups_handler,
@@ -79,6 +128,8 @@ use authentication_service::interface::{
     set_parent_role_handler,
     update_abac_policy_handler,
     update_permission_group_handler,
+    update_permission_handler,
+    update_role_handler,
     validate_token_handler,
 };
 use axum::{Router, routing::post};
@@ -199,10 +250,11 @@ async fn main() {
     let user_repo = Arc::new(PostgresUserRepository::new(pool.clone())) as Arc<dyn UserRepository>;
     let refresh_token_repo = Arc::new(PostgresRefreshTokenRepository::new(pool.clone()))
         as Arc<dyn RefreshTokenRepository>;
-    let auth_service = Arc::new(AuthService);
     let token_service = Arc::new(TokenService);
     let password_service = Arc::new(PasswordService);
-    let handler = Arc::new(LoginUserHandler);
+    let password_reset_service = Arc::new(PasswordResetService);
+    let authorization_service = Arc::new(AuthorizationService);
+
     let role_repo = Arc::new(PostgresRoleRepository::new(pool.clone())) as Arc<dyn RoleRepository>;
     let permission_repo =
         Arc::new(PostgresPermissionRepository::new(pool.clone())) as Arc<dyn PermissionRepository>;
@@ -210,24 +262,318 @@ async fn main() {
         as Arc<dyn PermissionGroupRepository>;
     let abac_policy_repo =
         Arc::new(PostgresAbacPolicyRepository::new(pool.clone())) as Arc<dyn AbacPolicyRepository>;
-    let authz_service = Arc::new(AuthZService {
-        role_repo: role_repo.clone(),
-        permission_repo: permission_repo.clone(),
-        abac_repo: abac_policy_repo.clone(),
-    });
 
-    let state = Arc::new(AppState {
-        user_repo: user_repo.clone(),
-        refresh_token_repo: refresh_token_repo.clone(),
-        auth_service: auth_service.clone(),
-        token_service: token_service.clone(),
-        password_service: password_service.clone(),
-        handler: handler.clone(),
-        role_repo: role_repo.clone(),
-        permission_repo: permission_repo.clone(),
-        permission_group_repo: permission_group_repo.clone(),
-        abac_policy_repo: abac_policy_repo.clone(),
-        authz_service: authz_service.clone(),
+    // Create CQRS buses
+    let command_bus = Arc::new(CommandBus::new());
+    let query_bus = Arc::new(QueryBus::new());
+
+    // Register command handlers
+    command_bus
+        .register_handler::<AuthenticateUserCommand, _>(AuthenticateUserCommandHandler::new(
+            user_repo.clone(),
+        ))
+        .await;
+
+    command_bus
+        .register_handler::<CreateUserCommand, _>(CreateUserCommandHandler::new(
+            user_repo.clone(),
+            role_repo.clone(),
+        ))
+        .await;
+
+    command_bus
+        .register_handler::<ChangePasswordCommand, _>(ChangePasswordCommandHandler::new(
+            user_repo.clone(),
+        ))
+        .await;
+
+    command_bus
+        .register_handler::<AssignRolesCommand, _>(AssignRolesCommandHandler::new(
+            role_repo.clone(),
+            user_repo.clone(),
+        ))
+        .await;
+
+    command_bus
+        .register_handler::<CreatePermissionCommand, _>(CreatePermissionCommandHandler::new(
+            permission_repo.clone(),
+            permission_group_repo.clone(),
+        ))
+        .await;
+
+    command_bus
+        .register_handler::<DeletePermissionCommand, _>(DeletePermissionCommandHandler::new(
+            permission_repo.clone(),
+        ))
+        .await;
+
+    command_bus
+        .register_handler::<RemovePermissionsFromRoleCommand, _>(
+            RemovePermissionsFromRoleCommandHandler::new(
+                role_repo.clone(),
+                permission_repo.clone(),
+            ),
+        )
+        .await;
+
+    command_bus
+        .register_handler::<RemoveRolesFromUserCommand, _>(RemoveRolesFromUserCommandHandler::new(
+            role_repo.clone(),
+            user_repo.clone(),
+        ))
+        .await;
+
+    command_bus
+        .register_handler::<DeleteRoleCommand, _>(DeleteRoleCommandHandler::new(role_repo.clone()))
+        .await;
+
+    command_bus
+        .register_handler::<CreateAbacPolicyCommand, _>(CreateAbacPolicyCommandHandler::new(
+            abac_policy_repo.clone(),
+        ))
+        .await;
+
+    command_bus
+        .register_handler::<UpdateAbacPolicyCommand, _>(UpdateAbacPolicyCommandHandler::new(
+            abac_policy_repo.clone(),
+        ))
+        .await;
+
+    command_bus
+        .register_handler::<DeleteAbacPolicyCommand, _>(DeleteAbacPolicyCommandHandler::new(
+            abac_policy_repo.clone(),
+        ))
+        .await;
+
+    command_bus
+        .register_handler::<AssignAbacPolicyToUserCommand, _>(
+            AssignAbacPolicyToUserCommandHandler::new(abac_policy_repo.clone()),
+        )
+        .await;
+
+    command_bus
+        .register_handler::<CreatePermissionGroupCommand, _>(
+            CreatePermissionGroupCommandHandler::new(permission_group_repo.clone()),
+        )
+        .await;
+
+    command_bus
+        .register_handler::<UpdatePermissionGroupCommand, _>(
+            UpdatePermissionGroupCommandHandler::new(permission_group_repo.clone()),
+        )
+        .await;
+
+    command_bus
+        .register_handler::<DeletePermissionGroupCommand, _>(
+            DeletePermissionGroupCommandHandler::new(permission_group_repo.clone()),
+        )
+        .await;
+
+    command_bus
+        .register_handler::<CreateRoleCommand, _>(CreateRoleCommandHandler::new(role_repo.clone()))
+        .await;
+
+    command_bus
+        .register_handler::<AssignPermissionsToRoleCommand, _>(
+            AssignPermissionsToRoleCommandHandler::new(role_repo.clone(), permission_repo.clone()),
+        )
+        .await;
+
+    command_bus
+        .register_handler::<UpdateUserProfileCommand, _>(UpdateUserProfileCommandHandler::new(
+            user_repo.clone(),
+        ))
+        .await;
+
+    command_bus
+        .register_handler::<ToggleUserLockCommand, _>(ToggleUserLockCommandHandler::new(
+            user_repo.clone(),
+        ))
+        .await;
+
+    command_bus
+        .register_handler::<ResetPasswordCommand, _>(ResetPasswordCommandHandler::new(
+            user_repo.clone(),
+        ))
+        .await;
+
+    command_bus
+        .register_handler::<ValidateTokenCommand, _>(ValidateTokenCommandHandler::new())
+        .await;
+
+    command_bus
+        .register_handler::<RefreshTokenCommand, _>(RefreshTokenCommandHandler::new(
+            user_repo.clone(),
+            refresh_token_repo.clone(),
+        ))
+        .await;
+
+    command_bus
+        .register_handler::<LogoutCommand, _>(LogoutCommandHandler::new(refresh_token_repo.clone()))
+        .await;
+
+    command_bus
+        .register_handler::<EvaluateAbacPoliciesCommand, _>(
+            EvaluateAbacPoliciesCommandHandler::new(abac_policy_repo.clone()),
+        )
+        .await;
+
+    command_bus
+        .register_handler::<SetParentRoleCommand, _>(SetParentRoleCommandHandler::new(
+            role_repo.clone(),
+        ))
+        .await;
+
+    command_bus
+        .register_handler::<UpdateRoleCommand, _>(UpdateRoleCommandHandler::new(role_repo.clone()))
+        .await;
+
+    command_bus
+        .register_handler::<UpdatePermissionCommand, _>(UpdatePermissionCommandHandler::new(
+            permission_repo.clone(),
+        ))
+        .await;
+
+    // Register query handlers
+    query_bus
+        .register_handler::<GetUserByIdQuery, _>(GetUserByIdQueryHandler::new(
+            user_repo.clone(),
+            role_repo.clone(),
+            permission_repo.clone(),
+        ))
+        .await;
+
+    query_bus
+        .register_handler::<CheckPermissionQuery, _>(CheckPermissionQueryHandler::new(
+            role_repo.clone(),
+            permission_repo.clone(),
+            abac_policy_repo.clone(),
+        ))
+        .await;
+
+    query_bus
+        .register_handler::<GetUserByIdQuery, _>(GetUserByIdQueryHandler::new(
+            user_repo.clone(),
+            role_repo.clone(),
+            permission_repo.clone(),
+        ))
+        .await;
+
+    query_bus
+        .register_handler::<GetRolesForUserQuery, _>(GetRolesForUserQueryHandler::new(
+            role_repo.clone(),
+        ))
+        .await;
+
+    query_bus
+        .register_handler::<CheckUserPermissionQuery, _>(CheckUserPermissionQueryHandler::new(
+            role_repo.clone(),
+            permission_repo.clone(),
+            abac_policy_repo.clone(),
+        ))
+        .await;
+
+    query_bus
+        .register_handler::<ListUsersQuery, _>(ListUsersQueryHandler::new(
+            user_repo.clone(),
+            role_repo.clone(),
+        ))
+        .await;
+
+    query_bus
+        .register_handler::<ListRolesQuery, _>(ListRolesQueryHandler::new(
+            role_repo.clone(),
+            permission_repo.clone(),
+        ))
+        .await;
+
+    query_bus
+        .register_handler::<ListPermissionsQuery, _>(ListPermissionsQueryHandler::new(
+            permission_repo.clone(),
+            permission_group_repo.clone(),
+        ))
+        .await;
+
+    query_bus
+        .register_handler::<GetPermissionsForUserQuery, _>(GetPermissionsForUserQueryHandler::new(
+            role_repo.clone(),
+            permission_repo.clone(),
+            abac_policy_repo.clone(),
+        ))
+        .await;
+
+    query_bus
+        .register_handler::<GetUserAuditEventsQuery, _>(GetUserAuditEventsQueryHandler::new())
+        .await;
+
+    query_bus
+        .register_handler::<ListAbacPoliciesQuery, _>(ListAbacPoliciesQueryHandler::new(
+            abac_policy_repo.clone(),
+        ))
+        .await;
+
+    query_bus
+        .register_handler::<ListPermissionGroupsQuery, _>(ListPermissionGroupsQueryHandler::new(
+            permission_group_repo.clone(),
+        ))
+        .await;
+
+    query_bus
+        .register_handler::<GetPermissionGroupQuery, _>(GetPermissionGroupQueryHandler::new(
+            permission_group_repo.clone(),
+        ))
+        .await;
+
+    query_bus
+        .register_handler::<GetRoleHierarchyQuery, _>(GetRoleHierarchyQueryHandler::new(
+            role_repo.clone(),
+        ))
+        .await;
+
+    query_bus
+        .register_handler::<ListRoleHierarchiesQuery, _>(ListRoleHierarchiesQueryHandler::new(
+            role_repo.clone(),
+        ))
+        .await;
+
+    query_bus
+        .register_handler::<GetPermissionsInGroupQuery, _>(GetPermissionsInGroupQueryHandler::new(
+            permission_group_repo.clone(),
+        ))
+        .await;
+
+    query_bus
+        .register_handler::<GetRolePermissionsQuery, _>(GetRolePermissionsQueryHandler::new(
+            permission_repo.clone(),
+        ))
+        .await;
+
+    query_bus
+        .register_handler::<GetRoleByIdQuery, _>(GetRoleByIdQueryHandler::new(
+            role_repo.clone(),
+            permission_repo.clone(),
+        ))
+        .await;
+
+    query_bus
+        .register_handler::<GetPermissionByIdQuery, _>(GetPermissionByIdQueryHandler::new(
+            permission_repo.clone(),
+        ))
+        .await;
+
+    let app_state = Arc::new(AppState {
+        user_repo,
+        role_repo,
+        permission_repo,
+        abac_policy_repo,
+        permission_group_repo,
+        refresh_token_repo,
+        token_service,
+        password_service,
+        password_reset_service,
+        authorization_service,
+        command_bus,
+        query_bus,
     });
 
     let http_host = env::var("HTTP_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
@@ -252,6 +598,11 @@ async fn main() {
             )
             .route("/iam/roles", post(create_role_handler))
             .route("/iam/roles", axum::routing::get(list_roles_handler))
+            .route("/iam/roles/{role_id}", axum::routing::get(get_role_handler))
+            .route(
+                "/iam/roles/{role_id}",
+                axum::routing::put(update_role_handler),
+            )
             .route(
                 "/iam/roles/{role_id}",
                 axum::routing::delete(delete_role_handler),
@@ -268,6 +619,7 @@ async fn main() {
                 "/iam/roles/{role_id}/hierarchy",
                 axum::routing::get(get_role_hierarchy_handler),
             )
+            .route("/iam/roles/hierarchy", post(create_role_hierarchy_handler))
             .route(
                 "/iam/roles/hierarchies",
                 axum::routing::get(list_role_hierarchies_handler),
@@ -286,6 +638,14 @@ async fn main() {
             .route(
                 "/iam/permissions",
                 axum::routing::get(list_permissions_handler),
+            )
+            .route(
+                "/iam/permissions/{permission_id}",
+                axum::routing::get(get_permission_handler),
+            )
+            .route(
+                "/iam/permissions/{permission_id}",
+                axum::routing::put(update_permission_handler),
             )
             .route(
                 "/iam/permissions/{permission_id}",
@@ -335,7 +695,7 @@ async fn main() {
         let app = Router::new()
             .nest("/v1", v1_routes)
             .merge(SwaggerUi::new("/swagger").url("/openapi.json", openapi.clone()))
-            .with_state(state);
+            .with_state(app_state);
         let listener = TcpListener::bind(&http_addr).await.expect("Failed to bind");
         println!("HTTP server running at http://{http_addr}");
         axum::serve(listener, app).await.unwrap();

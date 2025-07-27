@@ -1,5 +1,5 @@
 /// Permission value object: represents a permission in the system.
-#[derive(Clone, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
 pub struct Permission {
     pub id: String,
     pub name: String,

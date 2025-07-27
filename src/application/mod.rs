@@ -1,4 +1,9 @@
+pub mod command_bus;
+pub mod command_handlers;
 pub mod commands;
-pub mod handlers;
+pub mod events;
 pub mod queries;
+pub mod query_bus;
+pub mod query_handlers;
 pub mod services;
+pub mod validators;

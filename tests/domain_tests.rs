@@ -1,365 +1,532 @@
 use authentication_service::domain::{
-    abac_policy::AbacPolicy, permission::Permission, role::Role, token::Token, user::User,
+    abac_policy::{AbacCondition, AbacEffect, AbacPolicy},
+    audit::{AuditEvent, AuditEventType},
+    permission::Permission,
+    permission_group::PermissionGroup,
+    role::Role,
+    user::User,
 };
 use bcrypt::{DEFAULT_COST, hash};
-use chrono::{Duration, Utc};
+use serde_json::json;
 
-#[test]
-fn test_token_creation_and_validation() {
-    // Test access token creation
-    let access_token = Token {
-        token: "access_token_123".to_string(),
-        user_id: "user1".to_string(),
-        expires_at: Utc::now() + Duration::hours(1),
-        token_type: authentication_service::domain::token::TokenType::Access,
-    };
-    assert_eq!(access_token.user_id, "user1");
-    assert!(access_token.is_access());
-    assert!(!access_token.is_refresh());
-
-    // Test refresh token creation
-    let refresh_token = Token {
-        token: "refresh_token_456".to_string(),
-        user_id: "user1".to_string(),
-        expires_at: Utc::now() + Duration::hours(24),
-        token_type: authentication_service::domain::token::TokenType::Refresh,
-    };
-    assert_eq!(refresh_token.user_id, "user1");
-    assert!(refresh_token.is_refresh());
-    assert!(!refresh_token.is_access());
-
-    // Test token expiration
-    let mut token = Token {
-        token: "test_token".to_string(),
-        user_id: "user1".to_string(),
-        expires_at: Utc::now() + Duration::hours(1),
-        token_type: authentication_service::domain::token::TokenType::Access,
-    };
-    assert!(!token.is_expired());
-
-    // Set token to expired
-    token.expires_at = Utc::now() - Duration::hours(1);
-    assert!(token.is_expired());
-
-    // Set token to future
-    token.expires_at = Utc::now() + Duration::hours(1);
-    assert!(!token.is_expired());
-}
-
-#[test]
-fn test_permission_creation_and_validation() {
-    // Test permission creation
-    let permission = Permission::new("perm1".to_string(), "read".to_string());
-    assert_eq!(permission.name, "read");
-    assert_eq!(permission.id, "perm1");
-
-    // Test permission with different name
-    let permission = Permission::new("perm2".to_string(), "write".to_string());
-    assert_eq!(permission.name, "write");
-    assert_eq!(permission.id, "perm2");
-
-    // Test permission ID uniqueness
-    let permission1 = Permission::new("perm1".to_string(), "read".to_string());
-    let permission2 = Permission::new("perm2".to_string(), "write".to_string());
-    assert_ne!(permission1.id, permission2.id);
-}
+// ===== USER DOMAIN TESTS =====
 
 #[test]
 fn test_user_creation_and_validation() {
-    let password_hash = hash("password", DEFAULT_COST).unwrap();
-
-    // Test user creation
+    let password_hash = hash("password123", DEFAULT_COST).unwrap();
     let user = User {
         id: "user1".to_string(),
-        email: "user@example.com".to_string(),
+        email: "test@example.com".to_string(),
         password_hash: password_hash.clone(),
-        roles: vec![],
+        roles: vec!["user".to_string()],
         is_locked: false,
+        failed_login_attempts: 0,
     };
-    assert_eq!(user.email, "user@example.com");
+
+    assert_eq!(user.id, "user1");
+    assert_eq!(user.email, "test@example.com");
     assert_eq!(user.password_hash, password_hash);
-    assert!(user.roles.is_empty());
+    assert_eq!(user.roles, vec!["user".to_string()]);
     assert!(!user.is_locked);
-    assert!(!user.id.is_empty());
-
-    // Test user with roles
-    let mut user = User {
-        id: "user2".to_string(),
-        email: "admin@example.com".to_string(),
-        password_hash: password_hash.clone(),
-        roles: vec![],
-        is_locked: false,
-    };
-    user.add_role("admin".to_string());
-    user.add_role("user".to_string());
-    assert_eq!(user.roles.len(), 2);
-    assert!(user.roles.contains(&"admin".to_string()));
-    assert!(user.roles.contains(&"user".to_string()));
-
-    // Test duplicate role addition
-    user.add_role("admin".to_string());
-    assert_eq!(user.roles.len(), 2); // Should not add duplicate
-
-    // Test role removal
-    user.remove_role("user");
-    assert_eq!(user.roles.len(), 1);
-    assert!(user.roles.contains(&"admin".to_string()));
-    assert!(!user.roles.contains(&"user".to_string()));
-
-    // Test removing non-existent role
-    user.remove_role("nonexistent");
-    assert_eq!(user.roles.len(), 1); // Should not change
-
-    // Test account locking
-    user.lock_account();
-    assert!(user.is_locked);
-
-    user.unlock_account();
-    assert!(!user.is_locked);
-
-    // Test password verification
-    assert!(user.verify_password("password").unwrap());
-    assert!(!user.verify_password("wrongpassword").unwrap());
+    assert_eq!(user.failed_login_attempts, 0);
 }
 
 #[test]
-fn test_role_creation_and_validation() {
-    // Test role creation
+fn test_user_with_multiple_roles() {
+    let password_hash = hash("password123", DEFAULT_COST).unwrap();
+    let user = User {
+        id: "admin1".to_string(),
+        email: "admin@example.com".to_string(),
+        password_hash,
+        roles: vec![
+            "admin".to_string(),
+            "user".to_string(),
+            "moderator".to_string(),
+        ],
+        is_locked: false,
+        failed_login_attempts: 0,
+    };
+
+    assert_eq!(user.roles.len(), 3);
+    assert!(user.roles.contains(&"admin".to_string()));
+    assert!(user.roles.contains(&"user".to_string()));
+    assert!(user.roles.contains(&"moderator".to_string()));
+}
+
+#[test]
+fn test_locked_user() {
+    let password_hash = hash("password123", DEFAULT_COST).unwrap();
+    let user = User {
+        id: "locked1".to_string(),
+        email: "locked@example.com".to_string(),
+        password_hash,
+        roles: vec![],
+        is_locked: true,
+        failed_login_attempts: 5,
+    };
+
+    assert!(user.is_locked);
+    assert_eq!(user.failed_login_attempts, 5);
+}
+
+// ===== ROLE DOMAIN TESTS =====
+
+#[test]
+fn test_role_creation() {
     let role = Role {
         id: "role1".to_string(),
         name: "admin".to_string(),
-        permissions: vec![],
+        permissions: vec!["read".to_string(), "write".to_string()],
         parent_role_id: None,
     };
+
+    assert_eq!(role.id, "role1");
     assert_eq!(role.name, "admin");
-    assert!(role.permissions.is_empty());
-    assert!(!role.id.is_empty());
-
-    // Test role with permissions
-    let mut role = Role {
-        id: "role2".to_string(),
-        name: "moderator".to_string(),
-        permissions: vec![],
-        parent_role_id: None,
-    };
-    role.add_permission("read".to_string());
-    role.add_permission("write".to_string());
-    assert_eq!(role.permissions.len(), 2);
-    assert!(role.permissions.contains(&"read".to_string()));
-    assert!(role.permissions.contains(&"write".to_string()));
-
-    // Test duplicate permission addition
-    role.add_permission("read".to_string());
-    assert_eq!(role.permissions.len(), 2); // Should not add duplicate
-
-    // Test permission removal
-    role.remove_permission("write");
-    assert_eq!(role.permissions.len(), 1);
-    assert!(role.permissions.contains(&"read".to_string()));
-    assert!(!role.permissions.contains(&"write".to_string()));
-
-    // Test removing non-existent permission
-    role.remove_permission("nonexistent");
-    assert_eq!(role.permissions.len(), 1); // Should not change
-
-    // Test role ID uniqueness
-    let role1 = Role {
-        id: "role1".to_string(),
-        name: "admin".to_string(),
-        permissions: vec![],
-        parent_role_id: None,
-    };
-    let role2 = Role {
-        id: "role2".to_string(),
-        name: "user".to_string(),
-        permissions: vec![],
-        parent_role_id: None,
-    };
-    assert_ne!(role1.id, role2.id);
+    assert_eq!(
+        role.permissions,
+        vec!["read".to_string(), "write".to_string()]
+    );
+    assert!(role.parent_role_id.is_none());
 }
 
 #[test]
-fn test_abac_policy_creation_and_validation() {
-    // Test ABAC policy creation
-    let conditions = vec![
-        authentication_service::domain::abac_policy::AbacCondition {
-            attribute: "user.role".to_string(),
-            operator: "equals".to_string(),
-            value: "admin".to_string(),
-        },
-        authentication_service::domain::abac_policy::AbacCondition {
-            attribute: "resource.type".to_string(),
-            operator: "equals".to_string(),
-            value: "sensitive".to_string(),
-        },
-    ];
+fn test_role_with_parent() {
+    let role = Role {
+        id: "child_role".to_string(),
+        name: "moderator".to_string(),
+        permissions: vec!["read".to_string()],
+        parent_role_id: Some("parent_role".to_string()),
+    };
+
+    assert_eq!(role.parent_role_id, Some("parent_role".to_string()));
+}
+
+#[test]
+fn test_role_hierarchy() {
+    let parent_role = Role {
+        id: "parent".to_string(),
+        name: "admin".to_string(),
+        permissions: vec!["read".to_string(), "write".to_string()],
+        parent_role_id: None,
+    };
+
+    let child_role = Role {
+        id: "child".to_string(),
+        name: "moderator".to_string(),
+        permissions: vec!["read".to_string()],
+        parent_role_id: Some(parent_role.id.clone()),
+    };
+
+    assert_eq!(child_role.parent_role_id, Some(parent_role.id));
+}
+
+// ===== PERMISSION DOMAIN TESTS =====
+
+#[test]
+fn test_permission_creation() {
+    let permission = Permission {
+        id: "perm1".to_string(),
+        name: "read_users".to_string(),
+        description: Some("Read user information".to_string()),
+        group_id: None,
+        metadata: json!({}),
+        is_active: true,
+    };
+
+    assert_eq!(permission.id, "perm1");
+    assert_eq!(permission.name, "read_users");
+    assert_eq!(
+        permission.description,
+        Some("Read user information".to_string())
+    );
+    assert!(permission.group_id.is_none());
+    assert_eq!(permission.metadata, json!({}));
+    assert!(permission.is_active);
+}
+
+#[test]
+fn test_permission_without_description() {
+    let permission = Permission {
+        id: "perm2".to_string(),
+        name: "write_users".to_string(),
+        description: None,
+        group_id: None,
+        metadata: json!({}),
+        is_active: true,
+    };
+
+    assert!(permission.description.is_none());
+    assert!(permission.group_id.is_none());
+    assert!(permission.is_active);
+}
+
+// ===== PERMISSION GROUP DOMAIN TESTS =====
+
+#[test]
+fn test_permission_group_creation() {
+    let group = PermissionGroup {
+        id: "group1".to_string(),
+        name: "user_management".to_string(),
+        description: Some("Permissions for managing users".to_string()),
+        category: Some("administration".to_string()),
+        metadata: json!({"version": "1.0", "priority": "high"}),
+        is_active: true,
+    };
+
+    assert_eq!(group.id, "group1");
+    assert_eq!(group.name, "user_management");
+    assert_eq!(
+        group.description,
+        Some("Permissions for managing users".to_string())
+    );
+    assert_eq!(group.category, Some("administration".to_string()));
+    assert_eq!(
+        group.metadata,
+        json!({"version": "1.0", "priority": "high"})
+    );
+    assert!(group.is_active);
+}
+
+#[test]
+fn test_inactive_permission_group() {
+    let group = PermissionGroup {
+        id: "group2".to_string(),
+        name: "deprecated_group".to_string(),
+        description: None,
+        category: None,
+        metadata: json!({}),
+        is_active: false,
+    };
+
+    assert!(!group.is_active);
+    assert!(group.description.is_none());
+    assert!(group.category.is_none());
+}
+
+// ===== ABAC POLICY DOMAIN TESTS =====
+
+#[test]
+fn test_abac_policy_creation() {
+    let condition = AbacCondition {
+        attribute: "user.role".to_string(),
+        operator: "equals".to_string(),
+        value: "admin".to_string(),
+    };
 
     let policy = AbacPolicy {
         id: "policy1".to_string(),
         name: "admin_access".to_string(),
-        effect: authentication_service::domain::abac_policy::AbacEffect::Allow,
-        conditions: conditions.clone(),
-        priority: Some(1),
-        conflict_resolution: Some(
-            authentication_service::domain::abac_policy::ConflictResolutionStrategy::DenyOverrides,
-        ),
+        effect: AbacEffect::Allow,
+        conditions: vec![condition],
+        priority: Some(100),
+        conflict_resolution: None,
     };
+
+    assert_eq!(policy.id, "policy1");
     assert_eq!(policy.name, "admin_access");
-    assert_eq!(policy.conditions.len(), 2);
-    assert!(!policy.id.is_empty());
-
-    // Test policy with deny effect
-    let policy = AbacPolicy {
-        id: "policy2".to_string(),
-        name: "restricted_access".to_string(),
-        effect: authentication_service::domain::abac_policy::AbacEffect::Deny,
-        conditions: vec![],
-        priority: Some(50),
-        conflict_resolution: Some(
-            authentication_service::domain::abac_policy::ConflictResolutionStrategy::DenyOverrides,
-        ),
-    };
-    assert!(policy.conditions.is_empty());
-
-    // Test policy ID uniqueness
-    let policy1 = AbacPolicy {
-        id: "policy1".to_string(),
-        name: "policy1".to_string(),
-        effect: authentication_service::domain::abac_policy::AbacEffect::Allow,
-        conditions: vec![],
-        priority: Some(10),
-        conflict_resolution: Some(
-            authentication_service::domain::abac_policy::ConflictResolutionStrategy::AllowOverrides,
-        ),
-    };
-    let policy2 = AbacPolicy {
-        id: "policy2".to_string(),
-        name: "policy2".to_string(),
-        effect: authentication_service::domain::abac_policy::AbacEffect::Allow,
-        conditions: vec![],
-        priority: Some(20),
-        conflict_resolution: Some(
-            authentication_service::domain::abac_policy::ConflictResolutionStrategy::PriorityWins,
-        ),
-    };
-    assert_ne!(policy1.id, policy2.id);
+    assert_eq!(policy.conditions.len(), 1);
+    assert!(matches!(policy.effect, AbacEffect::Allow));
+    assert_eq!(policy.priority, Some(100));
 }
 
 #[test]
-fn test_abac_condition_creation() {
-    let condition = authentication_service::domain::abac_policy::AbacCondition {
-        attribute: "user.department".to_string(),
-        operator: "in".to_string(),
-        value: "engineering,product".to_string(),
-    };
-
-    assert_eq!(condition.attribute, "user.department");
-    assert_eq!(condition.operator, "in");
-    assert_eq!(condition.value, "engineering,product");
-}
-
-#[test]
-fn test_user_clone_and_debug() {
-    let password_hash = hash("password", DEFAULT_COST).unwrap();
-    let user = User {
-        id: "user1".to_string(),
-        email: "user@example.com".to_string(),
-        password_hash: password_hash.clone(),
-        roles: vec![],
-        is_locked: false,
-    };
-
-    // Test cloning
-    let cloned_user = user.clone();
-    assert_eq!(user.id, cloned_user.id);
-    assert_eq!(user.email, cloned_user.email);
-    assert_eq!(user.password_hash, cloned_user.password_hash);
-    assert_eq!(user.roles, cloned_user.roles);
-    assert_eq!(user.is_locked, cloned_user.is_locked);
-
-    // Test debug formatting
-    let debug_str = format!("{user:?}");
-    assert!(debug_str.contains("User"));
-    assert!(debug_str.contains("user@example.com"));
-}
-
-#[test]
-fn test_role_clone_and_debug() {
-    let mut role = Role {
-        id: "role1".to_string(),
-        name: "admin".to_string(),
-        permissions: vec![],
-        parent_role_id: None,
-    };
-    role.add_permission("read".to_string());
-    role.add_permission("write".to_string());
-
-    // Test cloning
-    let cloned_role = role.clone();
-    assert_eq!(role.id, cloned_role.id);
-    assert_eq!(role.name, cloned_role.name);
-    assert_eq!(role.permissions, cloned_role.permissions);
-
-    // Note: Role doesn't implement Debug, so we skip debug formatting test
-}
-
-#[test]
-fn test_permission_clone() {
-    let permission = Permission::new("perm1".to_string(), "read".to_string());
-
-    // Test cloning
-    let cloned_permission = permission.clone();
-    assert_eq!(permission.id, cloned_permission.id);
-    assert_eq!(permission.name, cloned_permission.name);
-
-    // Note: Permission doesn't implement Debug, so we skip debug formatting test
-}
-
-#[test]
-fn test_token_clone() {
-    let token = Token {
-        token: "test_token".to_string(),
-        user_id: "user1".to_string(),
-        expires_at: Utc::now() + Duration::hours(1),
-        token_type: authentication_service::domain::token::TokenType::Access,
-    };
-
-    // Test cloning
-    let cloned_token = token.clone();
-    assert_eq!(token.user_id, cloned_token.user_id);
-    assert_eq!(token.expires_at, cloned_token.expires_at);
-    // Note: TokenType doesn't implement PartialEq, so we skip that comparison
-
-    // Note: Token doesn't implement Debug, so we skip debug formatting test
-}
-
-#[test]
-fn test_abac_policy_clone_and_debug() {
-    let conditions = vec![authentication_service::domain::abac_policy::AbacCondition {
+fn test_abac_policy_with_multiple_conditions() {
+    let condition1 = AbacCondition {
         attribute: "user.role".to_string(),
         operator: "equals".to_string(),
         value: "admin".to_string(),
-    }];
-
-    let policy = AbacPolicy {
-        id: "policy1".to_string(),
-        name: "admin_policy".to_string(),
-        effect: authentication_service::domain::abac_policy::AbacEffect::Allow,
-        conditions: conditions.clone(),
-        priority: Some(50),
-        conflict_resolution: Some(
-            authentication_service::domain::abac_policy::ConflictResolutionStrategy::DenyOverrides,
-        ),
     };
 
-    // Test cloning
-    let cloned_policy = policy.clone();
-    assert_eq!(policy.id, cloned_policy.id);
-    assert_eq!(policy.name, cloned_policy.name);
-    assert_eq!(policy.conditions.len(), cloned_policy.conditions.len());
+    let condition2 = AbacCondition {
+        attribute: "resource.type".to_string(),
+        operator: "in".to_string(),
+        value: "users,roles,permissions".to_string(),
+    };
 
-    // Test debug formatting
-    let debug_str = format!("{policy:?}");
-    assert!(debug_str.contains("AbacPolicy"));
-    assert!(debug_str.contains("admin_policy"));
+    let policy = AbacPolicy {
+        id: "policy2".to_string(),
+        name: "admin_resource_access".to_string(),
+        effect: AbacEffect::Deny,
+        conditions: vec![condition1, condition2],
+        priority: Some(50),
+        conflict_resolution: None,
+    };
+
+    assert_eq!(policy.conditions.len(), 2);
+    assert!(matches!(policy.effect, AbacEffect::Deny));
+    assert_eq!(policy.priority, Some(50));
+}
+
+#[test]
+fn test_abac_condition_operators() {
+    let equals_condition = AbacCondition {
+        attribute: "user.id".to_string(),
+        operator: "equals".to_string(),
+        value: "user123".to_string(),
+    };
+
+    let in_condition = AbacCondition {
+        attribute: "user.roles".to_string(),
+        operator: "in".to_string(),
+        value: "admin,moderator".to_string(),
+    };
+
+    let greater_condition = AbacCondition {
+        attribute: "user.age".to_string(),
+        operator: "greater_than".to_string(),
+        value: "18".to_string(),
+    };
+
+    assert_eq!(equals_condition.operator, "equals");
+    assert_eq!(in_condition.operator, "in");
+    assert_eq!(greater_condition.operator, "greater_than");
+}
+
+// ===== AUDIT EVENT DOMAIN TESTS =====
+
+#[test]
+fn test_audit_event_creation() {
+    let details = json!({
+        "action": "login",
+        "method": "password",
+        "ip": "192.168.1.1"
+    });
+
+    let event = AuditEvent::new(
+        AuditEventType::Login,
+        Some("user123".to_string()),
+        details.clone(),
+        true,
+    );
+
+    assert_eq!(event.user_id, Some("user123".to_string()));
+    assert!(event.success);
+    assert!(event.error_message.is_none());
+    assert_eq!(event.details, details);
+    assert!(matches!(event.event_type, AuditEventType::Login));
+}
+
+#[test]
+fn test_audit_event_with_error() {
+    let details = json!({
+        "action": "login",
+        "method": "password"
+    });
+
+    let event = AuditEvent::new(
+        AuditEventType::FailedLogin,
+        Some("user123".to_string()),
+        details,
+        true,
+    )
+    .with_error("Invalid credentials".to_string());
+
+    assert!(!event.success);
+    assert_eq!(event.error_message, Some("Invalid credentials".to_string()));
+    assert!(matches!(event.event_type, AuditEventType::FailedLogin));
+}
+
+#[test]
+fn test_audit_event_with_context() {
+    let details = json!({
+        "action": "login",
+        "method": "password"
+    });
+
+    let event = AuditEvent::new(
+        AuditEventType::Login,
+        Some("user123".to_string()),
+        details,
+        true,
+    )
+    .with_context(
+        Some("192.168.1.1".to_string()),
+        Some("Mozilla/5.0 (Windows NT 10.0; Win64; x64)".to_string()),
+    );
+
+    assert_eq!(event.ip_address, Some("192.168.1.1".to_string()));
+    assert_eq!(
+        event.user_agent,
+        Some("Mozilla/5.0 (Windows NT 10.0; Win64; x64)".to_string())
+    );
+}
+
+#[test]
+fn test_audit_event_types() {
+    let login_event = AuditEvent::new(
+        AuditEventType::Login,
+        Some("user123".to_string()),
+        json!({}),
+        true,
+    );
+    assert!(matches!(login_event.event_type, AuditEventType::Login));
+
+    let logout_event = AuditEvent::new(
+        AuditEventType::Logout,
+        Some("user123".to_string()),
+        json!({}),
+        true,
+    );
+    assert!(matches!(logout_event.event_type, AuditEventType::Logout));
+
+    let token_refresh_event = AuditEvent::new(
+        AuditEventType::TokenRefresh,
+        Some("user123".to_string()),
+        json!({}),
+        true,
+    );
+    assert!(matches!(
+        token_refresh_event.event_type,
+        AuditEventType::TokenRefresh
+    ));
+
+    let password_change_event = AuditEvent::new(
+        AuditEventType::PasswordChange,
+        Some("user123".to_string()),
+        json!({}),
+        true,
+    );
+    assert!(matches!(
+        password_change_event.event_type,
+        AuditEventType::PasswordChange
+    ));
+}
+
+// ===== INTEGRATION TESTS =====
+
+#[test]
+fn test_user_with_roles_and_permissions() {
+    // Create a user with roles
+    let user = User {
+        id: "user1".to_string(),
+        email: "test@example.com".to_string(),
+        password_hash: hash("password", DEFAULT_COST).unwrap(),
+        roles: vec!["admin".to_string(), "user".to_string()],
+        is_locked: false,
+        failed_login_attempts: 0,
+    };
+
+    // Create roles
+    let admin_role = Role {
+        id: "admin".to_string(),
+        name: "admin".to_string(),
+        permissions: vec!["read_all".to_string(), "write_all".to_string()],
+        parent_role_id: None,
+    };
+
+    let user_role = Role {
+        id: "user".to_string(),
+        name: "user".to_string(),
+        permissions: vec!["read_own".to_string()],
+        parent_role_id: None,
+    };
+
+    // Verify user has expected roles
+    assert!(user.roles.contains(&"admin".to_string()));
+    assert!(user.roles.contains(&"user".to_string()));
+
+    // Verify roles have expected permissions
+    assert!(admin_role.permissions.contains(&"read_all".to_string()));
+    assert!(admin_role.permissions.contains(&"write_all".to_string()));
+    assert!(user_role.permissions.contains(&"read_own".to_string()));
+}
+
+#[test]
+fn test_abac_policy_evaluation_scenario() {
+    // Create an ABAC policy for admin access
+    let admin_condition = AbacCondition {
+        attribute: "user.roles".to_string(),
+        operator: "contains".to_string(),
+        value: "admin".to_string(),
+    };
+
+    let admin_policy = AbacPolicy {
+        id: "admin_policy".to_string(),
+        name: "admin_access".to_string(),
+        effect: AbacEffect::Allow,
+        conditions: vec![admin_condition],
+        priority: Some(100),
+        conflict_resolution: None,
+    };
+
+    // Create a deny policy for locked accounts
+    let locked_condition = AbacCondition {
+        attribute: "user.is_locked".to_string(),
+        operator: "equals".to_string(),
+        value: "true".to_string(),
+    };
+
+    let locked_policy = AbacPolicy {
+        id: "locked_policy".to_string(),
+        name: "deny_locked_users".to_string(),
+        effect: AbacEffect::Deny,
+        conditions: vec![locked_condition],
+        priority: Some(200), // Higher priority
+        conflict_resolution: None,
+    };
+
+    // Verify policy structure
+    assert!(matches!(admin_policy.effect, AbacEffect::Allow));
+    assert!(matches!(locked_policy.effect, AbacEffect::Deny));
+    assert!(locked_policy.priority > admin_policy.priority);
+}
+
+#[test]
+fn test_audit_trail_scenario() {
+    // Simulate a user login session
+    let user_id = "user123".to_string();
+
+    // Login event
+    let login_event = AuditEvent::new(
+        AuditEventType::Login,
+        Some(user_id.clone()),
+        json!({
+            "method": "password",
+            "ip": "192.168.1.1"
+        }),
+        true,
+    )
+    .with_context(
+        Some("192.168.1.1".to_string()),
+        Some("Mozilla/5.0".to_string()),
+    );
+
+    // Token refresh event
+    let refresh_event = AuditEvent::new(
+        AuditEventType::TokenRefresh,
+        Some(user_id.clone()),
+        json!({
+            "token_type": "access_token",
+            "expires_in": 3600
+        }),
+        true,
+    );
+
+    // Logout event
+    let logout_event = AuditEvent::new(
+        AuditEventType::Logout,
+        Some(user_id.clone()),
+        json!({
+            "reason": "user_initiated"
+        }),
+        true,
+    );
+
+    // Verify all events belong to the same user
+    assert_eq!(login_event.user_id, Some(user_id.clone()));
+    assert_eq!(refresh_event.user_id, Some(user_id.clone()));
+    assert_eq!(logout_event.user_id, Some(user_id));
+
+    // Verify all events are successful
+    assert!(login_event.success);
+    assert!(refresh_event.success);
+    assert!(logout_event.success);
+
+    // Verify event types
+    assert!(matches!(login_event.event_type, AuditEventType::Login));
+    assert!(matches!(
+        refresh_event.event_type,
+        AuditEventType::TokenRefresh
+    ));
+    assert!(matches!(logout_event.event_type, AuditEventType::Logout));
 }

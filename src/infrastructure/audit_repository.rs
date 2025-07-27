@@ -80,28 +80,24 @@ impl AuditRepository for PostgresAuditRepository {
         .fetch_all(&self.pool)
         .await?;
 
-        let mut events = Vec::new();
-        for row in rows {
-            let event_type: crate::domain::audit::AuditEventType =
-                serde_json::from_str(&row.event_type)
+        rows.into_iter()
+            .map(|row| {
+                let event_type = serde_json::from_str(&row.event_type)
                     .unwrap_or(crate::domain::audit::AuditEventType::SuspiciousActivity);
 
-            let details: serde_json::Value = row.details;
-
-            events.push(AuditEvent {
-                id: row.id,
-                timestamp: row.timestamp,
-                event_type,
-                user_id: row.user_id,
-                ip_address: row.ip_address,
-                user_agent: row.user_agent,
-                details,
-                success: row.success,
-                error_message: row.error_message,
-            });
-        }
-
-        Ok(events)
+                Ok(AuditEvent {
+                    id: row.id,
+                    timestamp: row.timestamp,
+                    event_type,
+                    user_id: row.user_id,
+                    ip_address: row.ip_address,
+                    user_agent: row.user_agent,
+                    details: row.details,
+                    success: row.success,
+                    error_message: row.error_message,
+                })
+            })
+            .collect()
     }
 
     #[instrument]
@@ -126,28 +122,24 @@ impl AuditRepository for PostgresAuditRepository {
         .fetch_all(&self.pool)
         .await?;
 
-        let mut events = Vec::new();
-        for row in rows {
-            let event_type: crate::domain::audit::AuditEventType =
-                serde_json::from_str(&row.event_type)
+        rows.into_iter()
+            .map(|row| {
+                let event_type = serde_json::from_str(&row.event_type)
                     .unwrap_or(crate::domain::audit::AuditEventType::SuspiciousActivity);
 
-            let details: serde_json::Value = row.details;
-
-            events.push(AuditEvent {
-                id: row.id,
-                timestamp: row.timestamp,
-                event_type,
-                user_id: row.user_id,
-                ip_address: row.ip_address,
-                user_agent: row.user_agent,
-                details,
-                success: row.success,
-                error_message: row.error_message,
-            });
-        }
-
-        Ok(events)
+                Ok(AuditEvent {
+                    id: row.id,
+                    timestamp: row.timestamp,
+                    event_type,
+                    user_id: row.user_id,
+                    ip_address: row.ip_address,
+                    user_agent: row.user_agent,
+                    details: row.details,
+                    success: row.success,
+                    error_message: row.error_message,
+                })
+            })
+            .collect()
     }
 
     #[instrument]
@@ -166,28 +158,24 @@ impl AuditRepository for PostgresAuditRepository {
         .fetch_all(&self.pool)
         .await?;
 
-        let mut events = Vec::new();
-        for row in rows {
-            let event_type: crate::domain::audit::AuditEventType =
-                serde_json::from_str(&row.event_type)
+        rows.into_iter()
+            .map(|row| {
+                let event_type = serde_json::from_str(&row.event_type)
                     .unwrap_or(crate::domain::audit::AuditEventType::SuspiciousActivity);
 
-            let details: serde_json::Value = row.details;
-
-            events.push(AuditEvent {
-                id: row.id,
-                timestamp: row.timestamp,
-                event_type,
-                user_id: row.user_id,
-                ip_address: row.ip_address,
-                user_agent: row.user_agent,
-                details,
-                success: row.success,
-                error_message: row.error_message,
-            });
-        }
-
-        Ok(events)
+                Ok(AuditEvent {
+                    id: row.id,
+                    timestamp: row.timestamp,
+                    event_type,
+                    user_id: row.user_id,
+                    ip_address: row.ip_address,
+                    user_agent: row.user_agent,
+                    details: row.details,
+                    success: row.success,
+                    error_message: row.error_message,
+                })
+            })
+            .collect()
     }
 }
 

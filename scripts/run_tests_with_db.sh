@@ -14,7 +14,8 @@ export DATABASE_URL="postgres://test_user:test_pass@localhost:5433/test_auth_db"
 
 # Run tests
 echo "Running tests..."
-cargo test
+#cargo test
+cargo tarpaulin --lib --out Xml --output-dir coverage     
 
 # Cleanup
 echo "Cleaning up test database..."

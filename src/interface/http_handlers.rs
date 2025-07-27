@@ -7,15 +7,17 @@ use axum::response::IntoResponse;
 use crate::interface::{
     AbacConditionDto, AbacEvaluationRequest, AbacEvaluationResponse, AbacPolicyListResponse,
     AbacPolicyRequest, AbacPolicyResponse, AssignAbacPolicyRequest, AssignPermissionRequest,
-    AssignRoleRequest, CreatePermissionGroupRequest, CreatePermissionRequest, CreateRoleRequest,
-    EffectivePermissionsResponse, ErrorResponse, LoginRequest, LoginResponse, LogoutRequest,
-    LogoutResponse, PasswordChangeRequest, PasswordResetConfirmRequest, PasswordResetRequest,
-    PasswordResetResponse, PermissionGroupListResponse, PermissionGroupResponse,
-    PermissionResponse, PermissionsListResponse, RefreshTokenRequest, RefreshTokenResponse,
-    RemovePermissionRequest, RemoveRoleRequest, RoleHierarchyListResponse, RoleHierarchyResponse,
-    RolePermissionsResponse, RoleResponse, RolesListResponse, SetParentRoleRequest,
-    UpdateAbacPolicyRequest, UpdatePermissionGroupRequest, UserRegistrationRequest,
-    UserRegistrationResponse, UserRolesResponse, ValidateTokenRequest, ValidateTokenResponse,
+    AssignRoleRequest, CreatePermissionGroupRequest, CreatePermissionRequest,
+    CreateRoleHierarchyRequest, CreateRoleRequest, EffectivePermissionsResponse, ErrorResponse,
+    LoginRequest, LoginResponse, LogoutRequest, LogoutResponse, PasswordChangeRequest,
+    PasswordResetConfirmRequest, PasswordResetRequest, PasswordResetResponse,
+    PermissionGroupListResponse, PermissionGroupResponse, PermissionResponse,
+    PermissionsListResponse, RefreshTokenRequest, RefreshTokenResponse, RemovePermissionRequest,
+    RemoveRoleRequest, RoleHierarchyListResponse, RoleHierarchyResponse, RolePermissionsResponse,
+    RoleResponse, RolesListResponse, SetParentRoleRequest, UpdateAbacPolicyRequest,
+    UpdatePermissionGroupRequest, UpdatePermissionRequest, UpdateRoleRequest,
+    UserRegistrationRequest, UserRegistrationResponse, UserRolesResponse, ValidateTokenRequest,
+    ValidateTokenResponse,
 };
 use axum::Json;
 use std::ops::Deref;
@@ -68,7 +70,7 @@ where
             .map_err(|_| (StatusCode::UNAUTHORIZED, "Invalid or expired token"))?;
         Ok(AuthenticatedUser {
             user_id: claims.sub.clone(),
-            roles: claims.roles.clone(),
+            roles: vec![], // Roles are no longer stored in Claims
             claims,
         })
     }
@@ -92,32 +94,74 @@ pub async fn login_handler(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<LoginRequest>,
 ) -> impl IntoResponse {
-    let cmd = crate::application::commands::LoginUserCommand {
-        email: payload.email.clone(),
-        password: payload.password,
-    };
-    let result = state
-        .handler
-        .handle(
-            cmd,
-            &state.auth_service,
-            &state.token_service,
-            &state.password_service,
-            state.user_repo.clone(),
-            state.refresh_token_repo.clone(),
-        )
-        .await;
+    let cmd = crate::application::commands::CommandFactory::authenticate_user(
+        payload.email,
+        payload.password,
+        None, // ip_address - could be extracted from request
+        None, // user_agent - could be extracted from request
+    );
+
+    let result = state.command_bus.execute(cmd).await;
+
     match result {
-        Ok((access_token, refresh_token)) => Json(LoginResponse {
-            access_token,
-            refresh_token,
-        })
-        .into_response(),
-        Err(e) => (
-            axum::http::StatusCode::UNAUTHORIZED,
-            format!("Login failed: {e:?}"),
-        )
-            .into_response(),
+        Ok(result_box) => {
+            if let Ok(user) = result_box.downcast::<crate::domain::user::User>() {
+                let (access_token, refresh_token) = state
+                    .token_service
+                    .issue_tokens(&user, &state.refresh_token_repo)
+                    .await
+                    .unwrap_or_else(|_| {
+                        panic!("Failed to issue tokens for authenticated user");
+                    });
+
+                Json(LoginResponse {
+                    access_token,
+                    refresh_token,
+                })
+                .into_response()
+            } else {
+                (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "Invalid result type from authenticate user command",
+                )
+                    .into_response()
+            }
+        }
+        Err(e) => {
+            let (status_code, error_message) =
+                if let Ok(auth_error) = e.downcast::<crate::application::services::AuthError>() {
+                    match *auth_error {
+                        crate::application::services::AuthError::UserNotFound => (
+                            axum::http::StatusCode::UNAUTHORIZED,
+                            "Invalid credentials".to_string(),
+                        ),
+                        crate::application::services::AuthError::InvalidCredentials => (
+                            axum::http::StatusCode::UNAUTHORIZED,
+                            "Invalid credentials".to_string(),
+                        ),
+                        crate::application::services::AuthError::AccountLocked => (
+                            axum::http::StatusCode::FORBIDDEN,
+                            "Account is locked".to_string(),
+                        ),
+                        _ => (
+                            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                            format!("Login failed: {auth_error:?}"),
+                        ),
+                    }
+                } else {
+                    (
+                        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                        "Login failed".to_string(),
+                    )
+                };
+            (
+                status_code,
+                Json(ErrorResponse {
+                    error: error_message,
+                }),
+            )
+                .into_response()
+        }
     }
 }
 
@@ -140,9 +184,14 @@ pub async fn list_role_permissions_handler(
     Path(role_id): Path<String>,
 ) -> impl IntoResponse {
     let allowed = state
-        .authz_service
-        .user_has_permission(&requesting_user, "rbac:read", None)
+        .query_bus
+        .execute(crate::application::queries::QueryFactory::check_permission(
+            requesting_user.clone(),
+            "rbac:read".to_string(),
+            None,
+        ))
         .await
+        .map(|result| result.downcast::<bool>().map(|b| *b).unwrap_or(false))
         .unwrap_or(false);
     if !allowed {
         return (
@@ -152,34 +201,29 @@ pub async fn list_role_permissions_handler(
             .into_response();
     }
 
-    let permissions = match state
-        .permission_repo
-        .get_permissions_for_role(&role_id)
-        .await
-    {
-        Ok(permissions) => permissions,
-        Err(_) => {
-            return (
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "Failed to retrieve role permissions",
-            )
-                .into_response();
+    let query = crate::application::queries::QueryFactory::get_role_permissions(role_id);
+
+    let result = state.query_bus.execute(query).await;
+
+    match result {
+        Ok(result_box) => {
+            if let Ok(result_box) = result_box.downcast::<RolePermissionsResponse>() {
+                let response = *result_box;
+                Json(response).into_response()
+            } else {
+                (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "Invalid result type from get role permissions query",
+                )
+                    .into_response()
+            }
         }
-    };
-
-    let permission_responses: Vec<PermissionResponse> = permissions
-        .into_iter()
-        .map(|permission| PermissionResponse {
-            id: permission.id,
-            name: permission.name,
-        })
-        .collect();
-
-    let resp = RolePermissionsResponse {
-        role_id,
-        permissions: permission_responses,
-    };
-    Json(resp).into_response()
+        Err(_) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "Failed to get role permissions",
+        )
+            .into_response(),
+    }
 }
 
 #[axum::debug_handler]
@@ -201,9 +245,14 @@ pub async fn list_user_roles_handler(
     Path(target_user_id): Path<String>,
 ) -> impl IntoResponse {
     let allowed = state
-        .authz_service
-        .user_has_permission(&requesting_user, "rbac:read", None)
+        .query_bus
+        .execute(crate::application::queries::QueryFactory::check_permission(
+            requesting_user.clone(),
+            "rbac:read".to_string(),
+            None,
+        ))
         .await
+        .map(|result| result.downcast::<bool>().map(|b| *b).unwrap_or(false))
         .unwrap_or(false);
     if !allowed {
         return (
@@ -260,9 +309,14 @@ pub async fn get_effective_permissions_handler(
     Path(target_user_id): Path<String>,
 ) -> impl IntoResponse {
     let allowed = state
-        .authz_service
-        .user_has_permission(&requesting_user, "rbac:read", None)
+        .query_bus
+        .execute(crate::application::queries::QueryFactory::check_permission(
+            requesting_user.clone(),
+            "rbac:read".to_string(),
+            None,
+        ))
         .await
+        .map(|result| result.downcast::<bool>().map(|b| *b).unwrap_or(false))
         .unwrap_or(false);
     if !allowed {
         return (
@@ -326,14 +380,28 @@ pub async fn validate_token_handler(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<ValidateTokenRequest>,
 ) -> impl IntoResponse {
-    let result = state.token_service.validate_token(&payload.token);
+    let cmd = crate::application::commands::CommandFactory::validate_token(payload.token);
+
+    let result = state.command_bus.execute(cmd).await;
+
     match result {
-        Ok(claims) => Json(ValidateTokenResponse {
-            valid: true,
-            user_id: claims.sub,
-            roles: claims.roles,
-        })
-        .into_response(),
+        Ok(result_box) => {
+            if let Ok(result_box) = result_box.downcast::<crate::application::services::Claims>() {
+                let claims = *result_box;
+                Json(ValidateTokenResponse {
+                    valid: true,
+                    user_id: claims.sub,
+                    roles: vec![], // Roles are no longer stored in Claims
+                })
+                .into_response()
+            } else {
+                (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "Invalid result type from validate token command",
+                )
+                    .into_response()
+            }
+        }
         Err(_) => Json(ValidateTokenResponse {
             valid: false,
             user_id: String::new(),
@@ -359,26 +427,40 @@ pub async fn refresh_token_handler(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<RefreshTokenRequest>,
 ) -> impl IntoResponse {
-    let result = state.token_service.validate_token(&payload.refresh_token);
-    match result {
-        Ok(claims) => {
-            let user_id = claims.sub;
-            let user = state.user_repo.find_by_email(&user_id).await;
-            if let Some(user) = user {
-                match state
-                    .token_service
-                    .refresh_tokens(
-                        &payload.refresh_token,
-                        &user,
-                        state.refresh_token_repo.clone(),
-                    )
-                    .await
-                {
-                    Ok((access_token, refresh_token)) => Json(RefreshTokenResponse {
-                        access_token,
-                        refresh_token,
-                    })
-                    .into_response(),
+    // First validate the token to get user_id
+    let validate_cmd =
+        crate::application::commands::CommandFactory::validate_token(payload.refresh_token.clone());
+    let validate_result = state.command_bus.execute(validate_cmd).await;
+
+    match validate_result {
+        Ok(claims_box) => {
+            if let Ok(claims_box) = claims_box.downcast::<crate::application::services::Claims>() {
+                let claims = *claims_box;
+                let user_id = claims.sub;
+
+                let refresh_cmd = crate::application::commands::CommandFactory::refresh_token(
+                    payload.refresh_token.clone(),
+                    user_id,
+                );
+                let refresh_result = state.command_bus.execute(refresh_cmd).await;
+
+                match refresh_result {
+                    Ok(access_token_box) => {
+                        if let Ok(access_token_box) = access_token_box.downcast::<String>() {
+                            let access_token = *access_token_box;
+                            Json(RefreshTokenResponse {
+                                access_token,
+                                refresh_token: payload.refresh_token,
+                            })
+                            .into_response()
+                        } else {
+                            (
+                                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                                "Invalid result type from refresh token command",
+                            )
+                                .into_response()
+                        }
+                    }
                     Err(_) => (
                         axum::http::StatusCode::UNAUTHORIZED,
                         "Invalid refresh token",
@@ -386,7 +468,11 @@ pub async fn refresh_token_handler(
                         .into_response(),
                 }
             } else {
-                (axum::http::StatusCode::UNAUTHORIZED, "User not found").into_response()
+                (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "Invalid result type from validate token command",
+                )
+                    .into_response()
             }
         }
         Err(_) => (
@@ -413,11 +499,38 @@ pub async fn logout_handler(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<LogoutRequest>,
 ) -> impl IntoResponse {
-    let result = state.token_service.validate_token(&payload.refresh_token);
-    match result {
-        Ok(claims) => {
-            let _ = state.refresh_token_repo.revoke(&claims.jti).await;
-            Json(LogoutResponse { success: true }).into_response()
+    // First validate the token to get user_id
+    let validate_cmd =
+        crate::application::commands::CommandFactory::validate_token(payload.refresh_token.clone());
+    let validate_result = state.command_bus.execute(validate_cmd).await;
+
+    match validate_result {
+        Ok(claims_box) => {
+            if let Ok(claims_box) = claims_box.downcast::<crate::application::services::Claims>() {
+                let claims = *claims_box;
+                let user_id = claims.sub;
+
+                let logout_cmd = crate::application::commands::CommandFactory::logout(
+                    payload.refresh_token,
+                    user_id,
+                );
+                let logout_result = state.command_bus.execute(logout_cmd).await;
+
+                match logout_result {
+                    Ok(_) => Json(LogoutResponse { success: true }).into_response(),
+                    Err(_) => (
+                        axum::http::StatusCode::UNAUTHORIZED,
+                        "Invalid refresh token",
+                    )
+                        .into_response(),
+                }
+            } else {
+                (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "Invalid result type from validate token command",
+                )
+                    .into_response()
+            }
         }
         Err(_) => (
             axum::http::StatusCode::UNAUTHORIZED,
@@ -450,9 +563,14 @@ pub async fn create_role_handler(
     Json(payload): Json<CreateRoleRequest>,
 ) -> impl IntoResponse {
     let allowed = state
-        .authz_service
-        .user_has_permission(&user_id, "rbac:manage", None)
+        .query_bus
+        .execute(crate::application::queries::QueryFactory::check_permission(
+            user_id.clone(),
+            "rbac:manage".to_string(),
+            None,
+        ))
         .await
+        .map(|result| result.downcast::<bool>().map(|b| *b).unwrap_or(false))
         .unwrap_or(false);
     if !allowed {
         return (
@@ -461,17 +579,43 @@ pub async fn create_role_handler(
         )
             .into_response();
     }
-    let role = state.role_repo.create_role(&payload.name).await;
-    (
-        axum::http::StatusCode::CREATED,
-        Json(RoleResponse {
-            id: role.id,
-            name: role.name,
-            permissions: role.permissions,
-            parent_role_id: role.parent_role_id,
-        }),
-    )
-        .into_response()
+    let cmd = crate::application::commands::CommandFactory::create_role(
+        payload.name,
+        None,                  // description
+        None,                  // parent_role_id
+        Some(user_id.clone()), // created_by
+    );
+
+    let result = state.command_bus.execute(cmd).await;
+
+    match result {
+        Ok(result_box) => {
+            if let Ok(result_box) = result_box.downcast::<crate::domain::role::Role>() {
+                let role = *result_box;
+                (
+                    axum::http::StatusCode::CREATED,
+                    Json(RoleResponse {
+                        id: role.id,
+                        name: role.name,
+                        permissions: role.permissions,
+                        parent_role_id: role.parent_role_id,
+                    }),
+                )
+                    .into_response()
+            } else {
+                (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "Invalid result type from create role command",
+                )
+                    .into_response()
+            }
+        }
+        Err(e) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to create role: {e:?}"),
+        )
+            .into_response(),
+    }
 }
 
 #[axum::debug_handler]
@@ -485,17 +629,51 @@ pub async fn create_role_handler(
     description = "List all roles."
 )]
 pub async fn list_roles_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let roles = state.role_repo.list_roles().await;
-    let roles = roles
-        .into_iter()
-        .map(|role| RoleResponse {
-            id: role.id,
-            name: role.name,
-            permissions: role.permissions,
-            parent_role_id: role.parent_role_id,
-        })
-        .collect();
-    Json(RolesListResponse { roles }).into_response()
+    let query = crate::application::queries::QueryFactory::list_roles(
+        1,     // page
+        100,   // page_size (large enough for now)
+        None,  // name_filter
+        false, // include_permissions
+        None,  // sort_by
+        None,  // sort_order
+    );
+
+    let result = state.query_bus.execute(query).await;
+
+    match result {
+        Ok(result_box) => {
+            if let Ok(result_box) = result_box
+                .downcast::<crate::application::queries::PaginatedResult<
+                    crate::application::queries::RoleReadModel,
+                >>()
+            {
+                let paginated_result = *result_box;
+                let roles: Vec<RoleResponse> = paginated_result
+                    .items
+                    .into_iter()
+                    .map(|role| RoleResponse {
+                        id: role.id,
+                        name: role.name,
+                        permissions: vec![],  // TODO: Get from role model
+                        parent_role_id: None, // TODO: Get from role model
+                    })
+                    .collect();
+
+                Json(RolesListResponse { roles }).into_response()
+            } else {
+                (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "Invalid result type from list roles query",
+                )
+                    .into_response()
+            }
+        }
+        Err(_) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "Failed to list roles",
+        )
+            .into_response(),
+    }
 }
 
 #[axum::debug_handler]
@@ -515,9 +693,14 @@ pub async fn delete_role_handler(
     Path(role_id): Path<String>,
 ) -> impl IntoResponse {
     let allowed = state
-        .authz_service
-        .user_has_permission(&user_id, "rbac:manage", None)
+        .query_bus
+        .execute(crate::application::queries::QueryFactory::check_permission(
+            user_id.clone(),
+            "rbac:manage".to_string(),
+            None,
+        ))
         .await
+        .map(|result| result.downcast::<bool>().map(|b| *b).unwrap_or(false))
         .unwrap_or(false);
     if !allowed {
         return (
@@ -526,8 +709,21 @@ pub async fn delete_role_handler(
         )
             .into_response();
     }
-    state.role_repo.delete_role(&role_id).await;
-    axum::http::StatusCode::NO_CONTENT.into_response()
+    let cmd = crate::application::commands::CommandFactory::delete_role(
+        role_id.clone(),
+        Some(user_id.clone()), // deleted_by
+    );
+
+    let result = state.command_bus.execute(cmd).await;
+
+    match result {
+        Ok(_) => axum::http::StatusCode::NO_CONTENT.into_response(),
+        Err(e) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to delete role: {e:?}"),
+        )
+            .into_response(),
+    }
 }
 
 #[axum::debug_handler]
@@ -548,9 +744,14 @@ pub async fn assign_role_handler(
     Json(payload): Json<AssignRoleRequest>,
 ) -> impl IntoResponse {
     let allowed = state
-        .authz_service
-        .user_has_permission(&user_id, "rbac:manage", None)
+        .query_bus
+        .execute(crate::application::queries::QueryFactory::check_permission(
+            user_id.clone(),
+            "rbac:manage".to_string(),
+            None,
+        ))
         .await
+        .map(|result| result.downcast::<bool>().map(|b| *b).unwrap_or(false))
         .unwrap_or(false);
     if !allowed {
         return (
@@ -559,11 +760,25 @@ pub async fn assign_role_handler(
         )
             .into_response();
     }
-    state
-        .role_repo
-        .assign_role(&payload.user_id, &payload.role_id)
-        .await;
-    axum::http::StatusCode::OK.into_response()
+
+    let cmd = crate::application::commands::CommandFactory::assign_roles(
+        payload.user_id,
+        vec![payload.role_id],
+        Some(user_id),
+    );
+
+    let result = state.command_bus.execute(cmd).await;
+
+    match result {
+        Ok(_) => axum::http::StatusCode::OK.into_response(),
+        Err(e) => (
+            axum::http::StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: format!("Role assignment failed: {e:?}"),
+            }),
+        )
+            .into_response(),
+    }
 }
 
 #[axum::debug_handler]
@@ -584,9 +799,14 @@ pub async fn remove_role_handler(
     Json(payload): Json<RemoveRoleRequest>,
 ) -> impl IntoResponse {
     let allowed = state
-        .authz_service
-        .user_has_permission(&user_id, "rbac:manage", None)
+        .query_bus
+        .execute(crate::application::queries::QueryFactory::check_permission(
+            user_id.clone(),
+            "rbac:manage".to_string(),
+            None,
+        ))
         .await
+        .map(|result| result.downcast::<bool>().map(|b| *b).unwrap_or(false))
         .unwrap_or(false);
     if !allowed {
         return (
@@ -595,11 +815,22 @@ pub async fn remove_role_handler(
         )
             .into_response();
     }
-    state
-        .role_repo
-        .remove_role(&payload.user_id, &payload.role_id)
-        .await;
-    axum::http::StatusCode::OK.into_response()
+    let cmd = crate::application::commands::CommandFactory::remove_roles_from_user(
+        payload.user_id.clone(),
+        vec![payload.role_id.clone()],
+        Some(user_id.clone()), // removed_by
+    );
+
+    let result = state.command_bus.execute(cmd).await;
+
+    match result {
+        Ok(_) => axum::http::StatusCode::OK.into_response(),
+        Err(e) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to remove role: {e:?}"),
+        )
+            .into_response(),
+    }
 }
 
 #[axum::debug_handler]
@@ -620,9 +851,14 @@ pub async fn create_permission_handler(
     Json(payload): Json<CreatePermissionRequest>,
 ) -> impl IntoResponse {
     let allowed = state
-        .authz_service
-        .user_has_permission(&user_id, "rbac:manage", None)
+        .query_bus
+        .execute(crate::application::queries::QueryFactory::check_permission(
+            user_id.clone(),
+            "rbac:manage".to_string(),
+            None,
+        ))
         .await
+        .map(|result| result.downcast::<bool>().map(|b| *b).unwrap_or(false))
         .unwrap_or(false);
     if !allowed {
         return (
@@ -631,19 +867,41 @@ pub async fn create_permission_handler(
         )
             .into_response();
     }
-    let perm = state
-        .permission_repo
-        .create_permission(&payload.name)
-        .await
-        .unwrap();
-    (
-        axum::http::StatusCode::CREATED,
-        Json(PermissionResponse {
-            id: perm.id,
-            name: perm.name,
-        }),
-    )
-        .into_response()
+    let cmd = crate::application::commands::CommandFactory::create_permission(
+        payload.name.clone(),
+        None,                  // description
+        None,                  // group_id
+        Some(user_id.clone()), // created_by
+    );
+
+    let result = state.command_bus.execute(cmd).await;
+
+    match result {
+        Ok(result_box) => {
+            if let Ok(result_box) = result_box.downcast::<crate::domain::permission::Permission>() {
+                let perm = *result_box;
+                (
+                    axum::http::StatusCode::CREATED,
+                    Json(PermissionResponse {
+                        id: perm.id,
+                        name: perm.name,
+                    }),
+                )
+                    .into_response()
+            } else {
+                (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "Invalid result type from create permission command",
+                )
+                    .into_response()
+            }
+        }
+        Err(e) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to create permission: {e:?}"),
+        )
+            .into_response(),
+    }
 }
 
 #[axum::debug_handler]
@@ -657,19 +915,49 @@ pub async fn create_permission_handler(
     description = "List all permissions."
 )]
 pub async fn list_permissions_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let perms = state
-        .permission_repo
-        .list_permissions()
-        .await
-        .unwrap_or_default();
-    let permissions = perms
-        .into_iter()
-        .map(|p| PermissionResponse {
-            id: p.id,
-            name: p.name,
-        })
-        .collect();
-    Json(PermissionsListResponse { permissions }).into_response()
+    let query = crate::application::queries::QueryFactory::list_permissions(
+        1,    // page
+        100,  // page_size (large enough for now)
+        None, // name_filter
+        None, // group_filter
+        None, // sort_by
+        None, // sort_order
+    );
+
+    let result = state.query_bus.execute(query).await;
+
+    match result {
+        Ok(result_box) => {
+            if let Ok(result_box) = result_box
+                .downcast::<crate::application::queries::PaginatedResult<
+                    crate::application::queries::PermissionReadModel,
+                >>()
+            {
+                let paginated_result = *result_box;
+                let permissions: Vec<PermissionResponse> = paginated_result
+                    .items
+                    .into_iter()
+                    .map(|p| PermissionResponse {
+                        id: p.id,
+                        name: p.name,
+                    })
+                    .collect();
+
+                Json(PermissionsListResponse { permissions }).into_response()
+            } else {
+                (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "Invalid result type from list permissions query",
+                )
+                    .into_response()
+            }
+        }
+        Err(_) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "Failed to list permissions",
+        )
+            .into_response(),
+    }
 }
 
 #[axum::debug_handler]
@@ -689,9 +977,14 @@ pub async fn delete_permission_handler(
     Path(permission_id): Path<String>,
 ) -> impl IntoResponse {
     let allowed = state
-        .authz_service
-        .user_has_permission(&user_id, "rbac:manage", None)
+        .query_bus
+        .execute(crate::application::queries::QueryFactory::check_permission(
+            user_id.clone(),
+            "rbac:manage".to_string(),
+            None,
+        ))
         .await
+        .map(|result| result.downcast::<bool>().map(|b| *b).unwrap_or(false))
         .unwrap_or(false);
     if !allowed {
         return (
@@ -700,12 +993,21 @@ pub async fn delete_permission_handler(
         )
             .into_response();
     }
-    state
-        .permission_repo
-        .delete_permission(&permission_id)
-        .await
-        .unwrap();
-    axum::http::StatusCode::NO_CONTENT.into_response()
+    let cmd = crate::application::commands::CommandFactory::delete_permission(
+        permission_id.clone(),
+        Some(user_id.clone()), // deleted_by
+    );
+
+    let result = state.command_bus.execute(cmd).await;
+
+    match result {
+        Ok(_) => axum::http::StatusCode::NO_CONTENT.into_response(),
+        Err(e) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to delete permission: {e:?}"),
+        )
+            .into_response(),
+    }
 }
 
 #[axum::debug_handler]
@@ -726,9 +1028,14 @@ pub async fn assign_permission_handler(
     Json(payload): Json<AssignPermissionRequest>,
 ) -> impl IntoResponse {
     let allowed = state
-        .authz_service
-        .user_has_permission(&user_id, "rbac:manage", None)
+        .query_bus
+        .execute(crate::application::queries::QueryFactory::check_permission(
+            user_id.clone(),
+            "rbac:manage".to_string(),
+            None,
+        ))
         .await
+        .map(|result| result.downcast::<bool>().map(|b| *b).unwrap_or(false))
         .unwrap_or(false);
     if !allowed {
         return (
@@ -737,12 +1044,22 @@ pub async fn assign_permission_handler(
         )
             .into_response();
     }
-    state
-        .permission_repo
-        .assign_permission(&payload.role_id, &payload.permission_id)
-        .await
-        .unwrap();
-    axum::http::StatusCode::OK.into_response()
+    let cmd = crate::application::commands::CommandFactory::assign_permissions_to_role(
+        payload.role_id.clone(),
+        vec![payload.permission_id.clone()],
+        Some(user_id.clone()), // assigned_by
+    );
+
+    let result = state.command_bus.execute(cmd).await;
+
+    match result {
+        Ok(_) => axum::http::StatusCode::OK.into_response(),
+        Err(e) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to assign permission: {e:?}"),
+        )
+            .into_response(),
+    }
 }
 
 #[axum::debug_handler]
@@ -763,9 +1080,14 @@ pub async fn remove_permission_handler(
     Json(payload): Json<RemovePermissionRequest>,
 ) -> impl IntoResponse {
     let allowed = state
-        .authz_service
-        .user_has_permission(&user_id, "rbac:manage", None)
+        .query_bus
+        .execute(crate::application::queries::QueryFactory::check_permission(
+            user_id.clone(),
+            "rbac:manage".to_string(),
+            None,
+        ))
         .await
+        .map(|result| result.downcast::<bool>().map(|b| *b).unwrap_or(false))
         .unwrap_or(false);
     if !allowed {
         return (
@@ -774,12 +1096,22 @@ pub async fn remove_permission_handler(
         )
             .into_response();
     }
-    state
-        .permission_repo
-        .remove_permission(&payload.role_id, &payload.permission_id)
-        .await
-        .unwrap();
-    axum::http::StatusCode::OK.into_response()
+    let cmd = crate::application::commands::CommandFactory::remove_permissions_from_role(
+        payload.role_id.clone(),
+        vec![payload.permission_id.clone()],
+        Some(user_id.clone()), // removed_by
+    );
+
+    let result = state.command_bus.execute(cmd).await;
+
+    match result {
+        Ok(_) => axum::http::StatusCode::OK.into_response(),
+        Err(e) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to remove permission: {e:?}"),
+        )
+            .into_response(),
+    }
 }
 
 // --- ABAC HANDLERS ---
@@ -802,9 +1134,14 @@ pub async fn create_abac_policy_handler(
     Json(payload): Json<AbacPolicyRequest>,
 ) -> impl IntoResponse {
     let allowed = state
-        .authz_service
-        .user_has_permission(&user_id, "rbac:manage", None)
+        .query_bus
+        .execute(crate::application::queries::QueryFactory::check_permission(
+            user_id.clone(),
+            "rbac:manage".to_string(),
+            None,
+        ))
         .await
+        .map(|result| result.downcast::<bool>().map(|b| *b).unwrap_or(false))
         .unwrap_or(false);
     if !allowed {
         return (
@@ -813,12 +1150,12 @@ pub async fn create_abac_policy_handler(
         )
             .into_response();
     }
-    let id = uuid::Uuid::new_v4().to_string();
     let effect = match payload.effect.as_str() {
         "Allow" => crate::domain::abac_policy::AbacEffect::Allow,
         "Deny" => crate::domain::abac_policy::AbacEffect::Deny,
         _ => return (axum::http::StatusCode::BAD_REQUEST, "Invalid effect").into_response(),
     };
+
     let conditions = payload
         .conditions
         .into_iter()
@@ -828,67 +1165,75 @@ pub async fn create_abac_policy_handler(
             value: c.value,
         })
         .collect();
-    let policy = crate::domain::abac_policy::AbacPolicy {
-        id: id.clone(),
-        name: payload.name,
-        effect,
-        conditions,
-        priority: payload.priority,
-        conflict_resolution: payload
-            .conflict_resolution
-            .as_ref()
-            .map(|s| match s.as_str() {
-                "deny_overrides" => {
-                    crate::domain::abac_policy::ConflictResolutionStrategy::DenyOverrides
-                }
-                "allow_overrides" => {
-                    crate::domain::abac_policy::ConflictResolutionStrategy::AllowOverrides
-                }
-                "priority_wins" => {
-                    crate::domain::abac_policy::ConflictResolutionStrategy::PriorityWins
-                }
-                "first_match" => crate::domain::abac_policy::ConflictResolutionStrategy::FirstMatch,
-                _ => crate::domain::abac_policy::ConflictResolutionStrategy::DenyOverrides, // Default
-            }),
-    };
-    let created = state.abac_policy_repo.create_policy(policy).await.unwrap();
-    let resp = AbacPolicyResponse {
-        id: created.id,
-        name: created.name,
-        effect: match created.effect {
+
+    let cmd = crate::application::commands::CommandFactory::create_abac_policy(
+        payload.name,
+        None, // description
+        match effect {
             crate::domain::abac_policy::AbacEffect::Allow => "Allow".to_string(),
             crate::domain::abac_policy::AbacEffect::Deny => "Deny".to_string(),
         },
-        conditions: created
-            .conditions
-            .into_iter()
-            .map(|c| AbacConditionDto {
-                attribute: c.attribute,
-                operator: c.operator,
-                value: c.value,
-            })
-            .collect(),
-        priority: created.priority.unwrap_or(50),
-        conflict_resolution: match created
-            .conflict_resolution
-            .as_ref()
-            .unwrap_or(&crate::domain::abac_policy::ConflictResolutionStrategy::DenyOverrides)
-        {
-            crate::domain::abac_policy::ConflictResolutionStrategy::DenyOverrides => {
-                "deny_overrides".to_string()
+        conditions,
+        payload.priority.unwrap_or(50),
+        Some(user_id.clone()), // created_by
+    );
+
+    let result = state.command_bus.execute(cmd).await;
+
+    match result {
+        Ok(result_box) => {
+            if let Ok(result_box) = result_box.downcast::<crate::domain::abac_policy::AbacPolicy>()
+            {
+                let created = *result_box;
+                let resp = AbacPolicyResponse {
+                    id: created.id,
+                    name: created.name,
+                    effect: match created.effect {
+                        crate::domain::abac_policy::AbacEffect::Allow => "Allow".to_string(),
+                        crate::domain::abac_policy::AbacEffect::Deny => "Deny".to_string(),
+                    },
+                    conditions: created
+                        .conditions
+                        .into_iter()
+                        .map(|c| AbacConditionDto {
+                            attribute: c.attribute,
+                            operator: c.operator,
+                            value: c.value,
+                        })
+                        .collect(),
+                    priority: created.priority.unwrap_or(50),
+                    conflict_resolution: match created.conflict_resolution.as_ref().unwrap_or(
+                        &crate::domain::abac_policy::ConflictResolutionStrategy::DenyOverrides,
+                    ) {
+                        crate::domain::abac_policy::ConflictResolutionStrategy::DenyOverrides => {
+                            "deny_overrides".to_string()
+                        }
+                        crate::domain::abac_policy::ConflictResolutionStrategy::AllowOverrides => {
+                            "allow_overrides".to_string()
+                        }
+                        crate::domain::abac_policy::ConflictResolutionStrategy::PriorityWins => {
+                            "priority_wins".to_string()
+                        }
+                        crate::domain::abac_policy::ConflictResolutionStrategy::FirstMatch => {
+                            "first_match".to_string()
+                        }
+                    },
+                };
+                (axum::http::StatusCode::CREATED, Json(resp)).into_response()
+            } else {
+                (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "Invalid result type from create ABAC policy command",
+                )
+                    .into_response()
             }
-            crate::domain::abac_policy::ConflictResolutionStrategy::AllowOverrides => {
-                "allow_overrides".to_string()
-            }
-            crate::domain::abac_policy::ConflictResolutionStrategy::PriorityWins => {
-                "priority_wins".to_string()
-            }
-            crate::domain::abac_policy::ConflictResolutionStrategy::FirstMatch => {
-                "first_match".to_string()
-            }
-        },
-    };
-    (axum::http::StatusCode::CREATED, Json(resp)).into_response()
+        }
+        Err(e) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to create ABAC policy: {e:?}"),
+        )
+            .into_response(),
+    }
 }
 
 #[axum::debug_handler]
@@ -911,9 +1256,14 @@ pub async fn update_abac_policy_handler(
     Json(payload): Json<UpdateAbacPolicyRequest>,
 ) -> impl IntoResponse {
     let allowed = state
-        .authz_service
-        .user_has_permission(&user_id, "rbac:manage", None)
+        .query_bus
+        .execute(crate::application::queries::QueryFactory::check_permission(
+            user_id.clone(),
+            "rbac:manage".to_string(),
+            None,
+        ))
         .await
+        .map(|result| result.downcast::<bool>().map(|b| *b).unwrap_or(false))
         .unwrap_or(false);
     if !allowed {
         return (
@@ -923,122 +1273,84 @@ pub async fn update_abac_policy_handler(
             .into_response();
     }
 
-    // Get the existing policy
-    let existing_policy = match state.abac_policy_repo.get_policy(&policy_id).await {
-        Ok(Some(policy)) => policy,
-        Ok(None) => {
-            return (axum::http::StatusCode::NOT_FOUND, "Policy not found").into_response();
-        }
-        Err(_) => {
-            return (
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "Failed to retrieve policy",
-            )
-                .into_response();
-        }
-    };
+    let cmd = crate::application::commands::CommandFactory::update_abac_policy(
+        policy_id.clone(),
+        payload.name,
+        None, // description
+        payload.effect,
+        payload.conditions.map(|conditions| {
+            conditions
+                .into_iter()
+                .map(|c| crate::domain::abac_policy::AbacCondition {
+                    attribute: c.attribute,
+                    operator: c.operator,
+                    value: c.value,
+                })
+                .collect::<Vec<_>>()
+        }),
+        payload.priority,
+        Some(user_id.clone()), // updated_by
+    );
 
-    // Create updated policy with new values or keep existing ones
-    let updated_policy = crate::domain::abac_policy::AbacPolicy {
-        id: policy_id.clone(),
-        name: payload.name.unwrap_or(existing_policy.name),
-        effect: if let Some(effect_str) = payload.effect {
-            match effect_str.as_str() {
-                "Allow" => crate::domain::abac_policy::AbacEffect::Allow,
-                "Deny" => crate::domain::abac_policy::AbacEffect::Deny,
-                _ => {
-                    return (axum::http::StatusCode::BAD_REQUEST, "Invalid effect").into_response();
-                }
-            }
-        } else {
-            existing_policy.effect
-        },
-        conditions: payload
-            .conditions
-            .map(|conditions| {
-                conditions
-                    .into_iter()
-                    .map(|c| crate::domain::abac_policy::AbacCondition {
-                        attribute: c.attribute,
-                        operator: c.operator,
-                        value: c.value,
-                    })
-                    .collect()
-            })
-            .unwrap_or(existing_policy.conditions),
-        priority: payload.priority.or(existing_policy.priority),
-        conflict_resolution: payload
-            .conflict_resolution
-            .as_ref()
-            .map(|s| match s.as_str() {
-                "deny_overrides" => {
-                    crate::domain::abac_policy::ConflictResolutionStrategy::DenyOverrides
-                }
-                "allow_overrides" => {
-                    crate::domain::abac_policy::ConflictResolutionStrategy::AllowOverrides
-                }
-                "priority_wins" => {
-                    crate::domain::abac_policy::ConflictResolutionStrategy::PriorityWins
-                }
-                "first_match" => crate::domain::abac_policy::ConflictResolutionStrategy::FirstMatch,
-                _ => crate::domain::abac_policy::ConflictResolutionStrategy::DenyOverrides, // Default
-            })
-            .or(existing_policy.conflict_resolution),
-    };
+    let result = state.command_bus.execute(cmd).await;
 
-    // Update the policy
-    let updated_policy = match state
-        .abac_policy_repo
-        .update_policy(&policy_id, updated_policy)
-        .await
-    {
-        Ok(policy) => policy,
-        Err(_) => {
-            return (
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "Failed to update policy",
-            )
-                .into_response();
+    match result {
+        Ok(result_box) => {
+            if let Ok(result_box) = result_box.downcast::<crate::domain::abac_policy::AbacPolicy>()
+            {
+                let updated_policy = *result_box;
+                let resp = AbacPolicyResponse {
+                    id: updated_policy.id,
+                    name: updated_policy.name,
+                    effect: match updated_policy.effect {
+                        crate::domain::abac_policy::AbacEffect::Allow => "Allow".to_string(),
+                        crate::domain::abac_policy::AbacEffect::Deny => "Deny".to_string(),
+                    },
+                    conditions: updated_policy
+                        .conditions
+                        .into_iter()
+                        .map(|c| AbacConditionDto {
+                            attribute: c.attribute,
+                            operator: c.operator,
+                            value: c.value,
+                        })
+                        .collect(),
+                    priority: updated_policy.priority.unwrap_or(50),
+                    conflict_resolution: match updated_policy
+                        .conflict_resolution
+                        .as_ref()
+                        .unwrap_or(
+                            &crate::domain::abac_policy::ConflictResolutionStrategy::DenyOverrides,
+                        ) {
+                        crate::domain::abac_policy::ConflictResolutionStrategy::DenyOverrides => {
+                            "deny_overrides".to_string()
+                        }
+                        crate::domain::abac_policy::ConflictResolutionStrategy::AllowOverrides => {
+                            "allow_overrides".to_string()
+                        }
+                        crate::domain::abac_policy::ConflictResolutionStrategy::PriorityWins => {
+                            "priority_wins".to_string()
+                        }
+                        crate::domain::abac_policy::ConflictResolutionStrategy::FirstMatch => {
+                            "first_match".to_string()
+                        }
+                    },
+                };
+                Json(resp).into_response()
+            } else {
+                (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "Invalid result type from update ABAC policy command",
+                )
+                    .into_response()
+            }
         }
-    };
-
-    let resp = AbacPolicyResponse {
-        id: updated_policy.id,
-        name: updated_policy.name,
-        effect: match updated_policy.effect {
-            crate::domain::abac_policy::AbacEffect::Allow => "Allow".to_string(),
-            crate::domain::abac_policy::AbacEffect::Deny => "Deny".to_string(),
-        },
-        conditions: updated_policy
-            .conditions
-            .into_iter()
-            .map(|c| AbacConditionDto {
-                attribute: c.attribute,
-                operator: c.operator,
-                value: c.value,
-            })
-            .collect(),
-        priority: updated_policy.priority.unwrap_or(50),
-        conflict_resolution: match updated_policy
-            .conflict_resolution
-            .as_ref()
-            .unwrap_or(&crate::domain::abac_policy::ConflictResolutionStrategy::DenyOverrides)
-        {
-            crate::domain::abac_policy::ConflictResolutionStrategy::DenyOverrides => {
-                "deny_overrides".to_string()
-            }
-            crate::domain::abac_policy::ConflictResolutionStrategy::AllowOverrides => {
-                "allow_overrides".to_string()
-            }
-            crate::domain::abac_policy::ConflictResolutionStrategy::PriorityWins => {
-                "priority_wins".to_string()
-            }
-            crate::domain::abac_policy::ConflictResolutionStrategy::FirstMatch => {
-                "first_match".to_string()
-            }
-        },
-    };
-    Json(resp).into_response()
+        Err(e) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to update ABAC policy: {e:?}"),
+        )
+            .into_response(),
+    }
 }
 
 #[axum::debug_handler]
@@ -1056,9 +1368,14 @@ pub async fn list_abac_policies_handler(
     RequirePermission { user_id }: RequirePermission,
 ) -> impl IntoResponse {
     let allowed = state
-        .authz_service
-        .user_has_permission(&user_id, "rbac:manage", None)
+        .query_bus
+        .execute(crate::application::queries::QueryFactory::check_permission(
+            user_id.clone(),
+            "rbac:manage".to_string(),
+            None,
+        ))
         .await
+        .map(|result| result.downcast::<bool>().map(|b| *b).unwrap_or(false))
         .unwrap_or(false);
     if !allowed {
         return (
@@ -1067,51 +1384,80 @@ pub async fn list_abac_policies_handler(
         )
             .into_response();
     }
-    let policies = state
-        .abac_policy_repo
-        .list_policies()
-        .await
-        .unwrap_or_default();
-    let resp = AbacPolicyListResponse {
-        policies: policies
-            .into_iter()
-            .map(|p| AbacPolicyResponse {
-                id: p.id,
-                name: p.name,
-                effect: match p.effect {
-                    crate::domain::abac_policy::AbacEffect::Allow => "Allow".to_string(),
-                    crate::domain::abac_policy::AbacEffect::Deny => "Deny".to_string(),
-                },
-                conditions: p
-                    .conditions
-                    .into_iter()
-                    .map(|c| AbacConditionDto {
-                        attribute: c.attribute,
-                        operator: c.operator,
-                        value: c.value,
-                    })
-                    .collect(),
-                priority: p.priority.unwrap_or(50),
-                conflict_resolution: match p.conflict_resolution.as_ref().unwrap_or(
-                    &crate::domain::abac_policy::ConflictResolutionStrategy::DenyOverrides,
-                ) {
-                    crate::domain::abac_policy::ConflictResolutionStrategy::DenyOverrides => {
-                        "deny_overrides".to_string()
-                    }
-                    crate::domain::abac_policy::ConflictResolutionStrategy::AllowOverrides => {
-                        "allow_overrides".to_string()
-                    }
-                    crate::domain::abac_policy::ConflictResolutionStrategy::PriorityWins => {
-                        "priority_wins".to_string()
-                    }
-                    crate::domain::abac_policy::ConflictResolutionStrategy::FirstMatch => {
-                        "first_match".to_string()
-                    }
-                },
-            })
-            .collect(),
-    };
-    Json(resp).into_response()
+    let query = crate::application::queries::QueryFactory::list_abac_policies(
+        1,    // page
+        100,  // page_size (large enough for now)
+        None, // name_filter
+        None, // effect_filter
+        true, // include_conditions
+        None, // sort_by
+        None, // sort_order
+    );
+
+    let result = state.query_bus.execute(query).await;
+
+    match result {
+        Ok(result_box) => {
+            if let Ok(result_box) =
+                result_box.downcast::<crate::application::queries::PaginatedResult<
+                    crate::domain::abac_policy::AbacPolicy,
+                >>()
+            {
+                let paginated_result = *result_box;
+                let resp = AbacPolicyListResponse {
+                    policies: paginated_result.items
+                        .into_iter()
+                        .map(|p| AbacPolicyResponse {
+                            id: p.id,
+                            name: p.name,
+                            effect: match p.effect {
+                                crate::domain::abac_policy::AbacEffect::Allow => "Allow".to_string(),
+                                crate::domain::abac_policy::AbacEffect::Deny => "Deny".to_string(),
+                            },
+                            conditions: p
+                                .conditions
+                                .into_iter()
+                                .map(|c| AbacConditionDto {
+                                    attribute: c.attribute,
+                                    operator: c.operator,
+                                    value: c.value,
+                                })
+                                .collect(),
+                            priority: p.priority.unwrap_or(50),
+                            conflict_resolution: match p.conflict_resolution.as_ref().unwrap_or(
+                                &crate::domain::abac_policy::ConflictResolutionStrategy::DenyOverrides,
+                            ) {
+                                crate::domain::abac_policy::ConflictResolutionStrategy::DenyOverrides => {
+                                    "deny_overrides".to_string()
+                                }
+                                crate::domain::abac_policy::ConflictResolutionStrategy::AllowOverrides => {
+                                    "allow_overrides".to_string()
+                                }
+                                crate::domain::abac_policy::ConflictResolutionStrategy::PriorityWins => {
+                                    "priority_wins".to_string()
+                                }
+                                crate::domain::abac_policy::ConflictResolutionStrategy::FirstMatch => {
+                                    "first_match".to_string()
+                                }
+                            },
+                        })
+                        .collect(),
+                };
+                Json(resp).into_response()
+            } else {
+                (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "Invalid result type from list ABAC policies query",
+                )
+                    .into_response()
+            }
+        }
+        Err(_) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "Failed to list ABAC policies",
+        )
+            .into_response(),
+    }
 }
 
 #[axum::debug_handler]
@@ -1131,9 +1477,14 @@ pub async fn delete_abac_policy_handler(
     Path(policy_id): Path<String>,
 ) -> impl IntoResponse {
     let allowed = state
-        .authz_service
-        .user_has_permission(&user_id, "rbac:manage", None)
+        .query_bus
+        .execute(crate::application::queries::QueryFactory::check_permission(
+            user_id.clone(),
+            "rbac:manage".to_string(),
+            None,
+        ))
         .await
+        .map(|result| result.downcast::<bool>().map(|b| *b).unwrap_or(false))
         .unwrap_or(false);
     if !allowed {
         return (
@@ -1142,12 +1493,21 @@ pub async fn delete_abac_policy_handler(
         )
             .into_response();
     }
-    state
-        .abac_policy_repo
-        .delete_policy(&policy_id)
-        .await
-        .unwrap();
-    axum::http::StatusCode::NO_CONTENT.into_response()
+    let cmd = crate::application::commands::CommandFactory::delete_abac_policy(
+        policy_id.clone(),
+        Some(user_id.clone()), // deleted_by
+    );
+
+    let result = state.command_bus.execute(cmd).await;
+
+    match result {
+        Ok(_) => axum::http::StatusCode::NO_CONTENT.into_response(),
+        Err(e) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to delete ABAC policy: {e:?}"),
+        )
+            .into_response(),
+    }
 }
 
 #[axum::debug_handler]
@@ -1168,9 +1528,14 @@ pub async fn assign_abac_policy_handler(
     Json(payload): Json<AssignAbacPolicyRequest>,
 ) -> impl IntoResponse {
     let allowed = state
-        .authz_service
-        .user_has_permission(&user_id, "rbac:manage", None)
+        .query_bus
+        .execute(crate::application::queries::QueryFactory::check_permission(
+            user_id.clone(),
+            "rbac:manage".to_string(),
+            None,
+        ))
         .await
+        .map(|result| result.downcast::<bool>().map(|b| *b).unwrap_or(false))
         .unwrap_or(false);
     if !allowed {
         return (
@@ -1179,26 +1544,29 @@ pub async fn assign_abac_policy_handler(
         )
             .into_response();
     }
-    let result = match payload.target_type.as_str() {
-        "user" => {
-            state
-                .abac_policy_repo
-                .assign_policy_to_user(&payload.target_id, &payload.policy_id)
-                .await
-        }
-        "role" => {
-            state
-                .abac_policy_repo
-                .assign_policy_to_role(&payload.target_id, &payload.policy_id)
-                .await
-        }
-        _ => return (axum::http::StatusCode::BAD_REQUEST, "Invalid target_type").into_response(),
-    };
+
+    // Validate target_type
+    if payload.target_type != "user" && payload.target_type != "role" {
+        return (
+            axum::http::StatusCode::BAD_REQUEST,
+            "Invalid target_type. Must be 'user' or 'role'",
+        )
+            .into_response();
+    }
+
+    let cmd = crate::application::commands::CommandFactory::assign_abac_policy_to_user(
+        payload.target_id.clone(),
+        payload.policy_id.clone(),
+        Some(user_id.clone()), // assigned_by
+    );
+
+    let result = state.command_bus.execute(cmd).await;
+
     match result {
         Ok(_) => axum::http::StatusCode::OK.into_response(),
-        Err(_) => (
+        Err(e) => (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            "Assignment failed",
+            format!("Assignment failed: {e:?}"),
         )
             .into_response(),
     }
@@ -1222,9 +1590,14 @@ pub async fn evaluate_abac_policies_handler(
     Json(payload): Json<AbacEvaluationRequest>,
 ) -> impl IntoResponse {
     let allowed = state
-        .authz_service
-        .user_has_permission(&user_id, "rbac:read", None)
+        .query_bus
+        .execute(crate::application::queries::QueryFactory::check_permission(
+            user_id.clone(),
+            "rbac:read".to_string(),
+            None,
+        ))
         .await
+        .map(|result| result.downcast::<bool>().map(|b| *b).unwrap_or(false))
         .unwrap_or(false);
     if !allowed {
         return (
@@ -1234,27 +1607,36 @@ pub async fn evaluate_abac_policies_handler(
             .into_response();
     }
 
-    // Evaluate the ABAC policies
-    let evaluation_result = match state
-        .authz_service
-        .evaluate_abac_policies(
-            &payload.user_id,
-            &payload.permission_name,
-            &payload.attributes,
-        )
-        .await
-    {
-        Ok(result) => result,
-        Err(_) => {
-            return (
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "Failed to evaluate policies",
-            )
-                .into_response();
-        }
-    };
+    let cmd = crate::application::commands::CommandFactory::evaluate_abac_policies(
+        payload.user_id,
+        payload.permission_name,
+        serde_json::to_value(payload.attributes).unwrap_or_default(),
+        Some(user_id.clone()), // evaluated_by
+    );
 
-    Json(evaluation_result).into_response()
+    let result = state.command_bus.execute(cmd).await;
+
+    match result {
+        Ok(result_box) => {
+            if let Ok(result_box) =
+                result_box.downcast::<crate::interface::AbacEvaluationResponse>()
+            {
+                let evaluation_result = *result_box;
+                Json(evaluation_result).into_response()
+            } else {
+                (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "Invalid result type from evaluate ABAC policies command",
+                )
+                    .into_response()
+            }
+        }
+        Err(e) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to evaluate policies: {e:?}"),
+        )
+            .into_response(),
+    }
 }
 
 // --- ROLE HIERARCHY HANDLERS ---
@@ -1280,9 +1662,14 @@ pub async fn set_parent_role_handler(
     Json(payload): Json<SetParentRoleRequest>,
 ) -> impl IntoResponse {
     let allowed = state
-        .authz_service
-        .user_has_permission(&user_id, "rbac:manage", None)
+        .query_bus
+        .execute(crate::application::queries::QueryFactory::check_permission(
+            user_id.clone(),
+            "rbac:manage".to_string(),
+            None,
+        ))
         .await
+        .map(|result| result.downcast::<bool>().map(|b| *b).unwrap_or(false))
         .unwrap_or(false);
     if !allowed {
         return (
@@ -1292,19 +1679,23 @@ pub async fn set_parent_role_handler(
             .into_response();
     }
 
-    match state
-        .role_repo
-        .set_parent_role(&role_id, payload.parent_role_id.as_deref())
-        .await
-    {
+    let cmd = crate::application::commands::CommandFactory::set_parent_role(
+        role_id.clone(),
+        payload.parent_role_id.clone(),
+        Some(user_id.clone()),
+    );
+
+    let result = state.command_bus.execute(cmd).await;
+
+    match result {
         Ok(_) => axum::http::StatusCode::OK.into_response(),
         Err(e) => {
             let error_msg = e.to_string();
-            if error_msg.contains("Circular reference") || error_msg.contains("circular") {
+            if error_msg.contains("circular") || error_msg.contains("invalid") {
                 (
                     axum::http::StatusCode::BAD_REQUEST,
                     Json(ErrorResponse {
-                        error: "Circular reference detected".to_string(),
+                        error: "Invalid request or circular reference".to_string(),
                     }),
                 )
                     .into_response()
@@ -1347,9 +1738,14 @@ pub async fn get_role_hierarchy_handler(
     Path(role_id): Path<String>,
 ) -> impl IntoResponse {
     let allowed = state
-        .authz_service
-        .user_has_permission(&user_id, "rbac:read", None)
+        .query_bus
+        .execute(crate::application::queries::QueryFactory::check_permission(
+            user_id.clone(),
+            "rbac:read".to_string(),
+            None,
+        ))
         .await
+        .map(|result| result.downcast::<bool>().map(|b| *b).unwrap_or(false))
         .unwrap_or(false);
     if !allowed {
         return (
@@ -1359,66 +1755,45 @@ pub async fn get_role_hierarchy_handler(
             .into_response();
     }
 
-    // Get the role details
-    let roles = state.role_repo.list_roles().await;
-    let role = roles.iter().find(|r| r.id == role_id);
+    let query = crate::application::queries::QueryFactory::get_role_hierarchy(role_id.clone());
 
-    if role.is_none() {
-        return (
-            axum::http::StatusCode::NOT_FOUND,
-            Json(ErrorResponse {
-                error: "Role not found".to_string(),
-            }),
-        )
-            .into_response();
-    }
+    let result = state.query_bus.execute(query).await;
 
-    let role = role.unwrap();
-
-    // Get inherited roles
-    let inherited_roles = match state.role_repo.get_inherited_roles(&role_id).await {
-        Ok(roles) => roles,
-        Err(_) => {
-            return (
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "Failed to get inherited roles".to_string(),
-                }),
-            )
-                .into_response();
+    match result {
+        Ok(result_box) => {
+            if let Ok(result_box) = result_box.downcast::<crate::interface::RoleHierarchyResponse>()
+            {
+                let response = *result_box;
+                Json(response).into_response()
+            } else {
+                (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "Invalid result type from get role hierarchy query",
+                )
+                    .into_response()
+            }
         }
-    };
-
-    // Get parent role name if exists
-    let parent_role_name = if let Some(parent_id) = &role.parent_role_id {
-        roles
-            .iter()
-            .find(|r| r.id == *parent_id)
-            .map(|r| r.name.clone())
-    } else {
-        None
-    };
-
-    // Convert inherited roles to RoleResponse
-    let inherited_role_responses: Vec<RoleResponse> = inherited_roles
-        .into_iter()
-        .map(|r| RoleResponse {
-            id: r.id,
-            name: r.name,
-            permissions: r.permissions,
-            parent_role_id: r.parent_role_id,
-        })
-        .collect();
-
-    let response = RoleHierarchyResponse {
-        role_id: role.id.clone(),
-        role_name: role.name.clone(),
-        parent_role_id: role.parent_role_id.clone(),
-        parent_role_name,
-        inherited_roles: inherited_role_responses,
-    };
-
-    Json(response).into_response()
+        Err(e) => {
+            let error_msg = e.to_string();
+            if error_msg.contains("not found") || error_msg.contains("Database error") {
+                (
+                    axum::http::StatusCode::NOT_FOUND,
+                    Json(ErrorResponse {
+                        error: "Role not found".to_string(),
+                    }),
+                )
+                    .into_response()
+            } else {
+                (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: "Failed to get role hierarchy".to_string(),
+                    }),
+                )
+                    .into_response()
+            }
+        }
+    }
 }
 
 #[axum::debug_handler]
@@ -1437,9 +1812,14 @@ pub async fn list_role_hierarchies_handler(
     RequirePermission { user_id }: RequirePermission,
 ) -> impl IntoResponse {
     let allowed = state
-        .authz_service
-        .user_has_permission(&user_id, "rbac:read", None)
+        .query_bus
+        .execute(crate::application::queries::QueryFactory::check_permission(
+            user_id.clone(),
+            "rbac:read".to_string(),
+            None,
+        ))
         .await
+        .map(|result| result.downcast::<bool>().map(|b| *b).unwrap_or(false))
         .unwrap_or(false);
     if !allowed {
         return (
@@ -1449,44 +1829,111 @@ pub async fn list_role_hierarchies_handler(
             .into_response();
     }
 
-    let roles = state.role_repo.list_roles().await;
-    let mut hierarchies = Vec::new();
+    let query = crate::application::queries::QueryFactory::list_role_hierarchies();
 
-    for role in &roles {
-        let inherited_roles = match state.role_repo.get_inherited_roles(&role.id).await {
-            Ok(roles) => roles,
-            Err(_) => continue, // Skip this role if we can't get inherited roles
-        };
+    let result = state.query_bus.execute(query).await;
 
-        let parent_role_name = if let Some(parent_id) = &role.parent_role_id {
-            roles
-                .iter()
-                .find(|r| r.id == *parent_id)
-                .map(|r| r.name.clone())
-        } else {
-            None
-        };
+    match result {
+        Ok(result_box) => {
+            if let Ok(result_box) =
+                result_box.downcast::<crate::interface::RoleHierarchyListResponse>()
+            {
+                let response = *result_box;
+                Json(response).into_response()
+            } else {
+                (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "Invalid result type from list role hierarchies query",
+                )
+                    .into_response()
+            }
+        }
+        Err(e) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("Failed to list role hierarchies: {e:?}"),
+            }),
+        )
+            .into_response(),
+    }
+}
 
-        let inherited_role_responses: Vec<RoleResponse> = inherited_roles
-            .into_iter()
-            .map(|r| RoleResponse {
-                id: r.id,
-                name: r.name,
-                permissions: r.permissions,
-                parent_role_id: r.parent_role_id,
-            })
-            .collect();
-
-        hierarchies.push(RoleHierarchyResponse {
-            role_id: role.id.clone(),
-            role_name: role.name.clone(),
-            parent_role_id: role.parent_role_id.clone(),
-            parent_role_name,
-            inherited_roles: inherited_role_responses,
-        });
+#[axum::debug_handler]
+#[utoipa::path(
+    post,
+    path = "/v1/iam/roles/hierarchy",
+    request_body = CreateRoleHierarchyRequest,
+    responses(
+        (status = 200, description = "Role hierarchy created successfully"),
+        (status = 400, description = "Invalid request or circular reference", body = ErrorResponse),
+        (status = 403, description = "Insufficient permissions", body = ErrorResponse),
+        (status = 404, description = "Role not found", body = ErrorResponse),
+    ),
+    tags = ["RBAC"],
+    description = "Create a role hierarchy by setting a parent role for a child role. Requires rbac:manage permission."
+)]
+pub async fn create_role_hierarchy_handler(
+    State(state): State<Arc<AppState>>,
+    RequirePermission { user_id }: RequirePermission,
+    Json(payload): Json<CreateRoleHierarchyRequest>,
+) -> impl IntoResponse {
+    let allowed = state
+        .query_bus
+        .execute(crate::application::queries::QueryFactory::check_permission(
+            user_id.clone(),
+            "rbac:manage".to_string(),
+            None,
+        ))
+        .await
+        .map(|result| result.downcast::<bool>().map(|b| *b).unwrap_or(false))
+        .unwrap_or(false);
+    if !allowed {
+        return (
+            axum::http::StatusCode::FORBIDDEN,
+            "Insufficient permissions",
+        )
+            .into_response();
     }
 
-    Json(RoleHierarchyListResponse { hierarchies }).into_response()
+    let cmd = crate::application::commands::CommandFactory::set_parent_role(
+        payload.child_role_id.clone(),
+        Some(payload.parent_role_id.clone()),
+        Some(user_id.clone()),
+    );
+
+    let result = state.command_bus.execute(cmd).await;
+
+    match result {
+        Ok(_) => axum::http::StatusCode::OK.into_response(),
+        Err(e) => {
+            let error_msg = e.to_string();
+            if error_msg.contains("circular") || error_msg.contains("invalid") {
+                (
+                    axum::http::StatusCode::BAD_REQUEST,
+                    Json(ErrorResponse {
+                        error: "Invalid request or circular reference".to_string(),
+                    }),
+                )
+                    .into_response()
+            } else if error_msg.contains("not found") {
+                (
+                    axum::http::StatusCode::NOT_FOUND,
+                    Json(ErrorResponse {
+                        error: "Role not found".to_string(),
+                    }),
+                )
+                    .into_response()
+            } else {
+                (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: "Failed to create role hierarchy".to_string(),
+                    }),
+                )
+                    .into_response()
+            }
+        }
+    }
 }
 
 // --- USER MANAGEMENT HANDLERS ---
@@ -1508,55 +1955,65 @@ pub async fn register_user_handler(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<UserRegistrationRequest>,
 ) -> impl IntoResponse {
-    // Check if user already exists
-    if let Some(_existing_user) = state.user_repo.find_by_email(&payload.email).await {
-        return (
-            axum::http::StatusCode::CONFLICT,
-            Json(ErrorResponse {
-                error: "User with this email already exists".to_string(),
-            }),
-        )
-            .into_response();
+    let cmd = crate::application::commands::CommandFactory::create_user(
+        payload.email,
+        payload.password,
+        None,   // first_name
+        None,   // last_name
+        vec![], // role_ids
+        None,   // created_by
+    );
+
+    let result = state.command_bus.execute(cmd).await;
+
+    match result {
+        Ok(result_box) => {
+            if let Ok(result_box) = result_box.downcast::<crate::domain::user::User>() {
+                let created_user = *result_box;
+                let response = UserRegistrationResponse {
+                    user_id: created_user.id.clone(),
+                    email: created_user.email.clone(),
+                    message: "User registered successfully".to_string(),
+                };
+                (axum::http::StatusCode::CREATED, Json(response)).into_response()
+            } else {
+                (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: "Invalid result type from user creation command".to_string(),
+                    }),
+                )
+                    .into_response()
+            }
+        }
+        Err(e) => {
+            let (status_code, error_message) =
+                if let Ok(auth_error) = e.downcast::<crate::application::services::AuthError>() {
+                    match *auth_error {
+                        crate::application::services::AuthError::UserAlreadyExists => (
+                            axum::http::StatusCode::CONFLICT,
+                            "User already exists".to_string(),
+                        ),
+                        _ => (
+                            axum::http::StatusCode::BAD_REQUEST,
+                            format!("User registration failed: {auth_error:?}"),
+                        ),
+                    }
+                } else {
+                    (
+                        axum::http::StatusCode::BAD_REQUEST,
+                        "User registration failed".to_string(),
+                    )
+                };
+            (
+                status_code,
+                Json(ErrorResponse {
+                    error: error_message,
+                }),
+            )
+                .into_response()
+        }
     }
-
-    // Create new user
-    let user_id = uuid::Uuid::new_v4().to_string();
-    let password_hash = match bcrypt::hash(&payload.password, bcrypt::DEFAULT_COST) {
-        Ok(hash) => hash,
-        Err(_) => {
-            return (
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "Failed to hash password".to_string(),
-                }),
-            )
-                .into_response();
-        }
-    };
-
-    let user = crate::domain::user::User::new(user_id, payload.email.clone(), password_hash);
-
-    // Store user in database
-    let created_user = match state.user_repo.create_user(user).await {
-        Ok(user) => user,
-        Err(_) => {
-            return (
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "Failed to create user".to_string(),
-                }),
-            )
-                .into_response();
-        }
-    };
-
-    let response = UserRegistrationResponse {
-        user_id: created_user.id.clone(),
-        email: created_user.email.clone(),
-        message: "User registered successfully".to_string(),
-    };
-
-    (axum::http::StatusCode::CREATED, Json(response)).into_response()
 }
 
 #[axum::debug_handler]
@@ -1578,79 +2035,25 @@ pub async fn change_password_handler(
     RequirePermission { user_id }: RequirePermission,
     Json(payload): Json<PasswordChangeRequest>,
 ) -> impl IntoResponse {
-    // Get user from database
-    let user = match state.user_repo.find_by_email(&user_id).await {
-        Some(user) => user,
-        None => {
-            return (
-                axum::http::StatusCode::NOT_FOUND,
-                Json(ErrorResponse {
-                    error: "User not found".to_string(),
-                }),
-            )
-                .into_response();
-        }
-    };
+    let cmd = crate::application::commands::CommandFactory::change_password(
+        user_id,
+        payload.current_password,
+        payload.new_password,
+        true, // require_current_password
+    );
 
-    // Verify current password
-    if !state
-        .password_service
-        .verify(&user, &payload.current_password)
-    {
-        return (
+    let result = state.command_bus.execute(cmd).await;
+
+    match result {
+        Ok(_) => axum::http::StatusCode::NO_CONTENT.into_response(),
+        Err(e) => (
             axum::http::StatusCode::BAD_REQUEST,
             Json(ErrorResponse {
-                error: "Invalid current password".to_string(),
+                error: format!("Password change failed: {e:?}"),
             }),
         )
-            .into_response();
+            .into_response(),
     }
-
-    // Validate new password strength (basic validation)
-    if payload.new_password.len() < 8 {
-        return (
-            axum::http::StatusCode::BAD_REQUEST,
-            Json(ErrorResponse {
-                error: "New password must be at least 8 characters long".to_string(),
-            }),
-        )
-            .into_response();
-    }
-
-    // Hash the new password
-    let new_password_hash = match bcrypt::hash(&payload.new_password, bcrypt::DEFAULT_COST) {
-        Ok(hash) => hash,
-        Err(_) => {
-            return (
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "Failed to hash new password".to_string(),
-                }),
-            )
-                .into_response();
-        }
-    };
-
-    // Update the user's password in the database
-    if state
-        .user_repo
-        .update_password(&user.id, &new_password_hash)
-        .await
-        .is_err()
-    {
-        return (
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: "Failed to update password".to_string(),
-            }),
-        )
-            .into_response();
-    }
-
-    // TODO: Revoke all existing refresh tokens for the user
-    // TODO: Log the password change event
-
-    axum::http::StatusCode::NO_CONTENT.into_response()
 }
 
 #[axum::debug_handler]
@@ -1713,21 +2116,30 @@ pub async fn request_password_reset_handler(
     description = "Confirm password reset with token."
 )]
 pub async fn confirm_password_reset_handler(
-    State(_state): State<Arc<AppState>>,
-    Json(_payload): Json<PasswordResetConfirmRequest>,
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<PasswordResetConfirmRequest>,
 ) -> impl IntoResponse {
-    // Validate reset token and get user (this would need to be implemented)
-    // In a real implementation, you would:
-    // 1. Validate the reset token
-    // 2. Check if it's expired
-    // 3. Get the associated user
-    // 4. Update the password
-    // 5. Revoke all existing refresh tokens
-    // 6. Delete the reset token
-    // 7. Log the password reset
+    let cmd = crate::application::commands::CommandFactory::reset_password(
+        payload.reset_token,
+        payload.new_password,
+        None, // ip_address - could be extracted from request
+    );
 
-    // For now, we'll just return success
-    axum::http::StatusCode::NO_CONTENT.into_response()
+    let result = state.command_bus.execute(cmd).await;
+
+    match result {
+        Ok(_) => axum::http::StatusCode::NO_CONTENT.into_response(),
+        Err(e) => {
+            tracing::error!("Password reset failed: {:?}", e);
+            (
+                axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+                Json(ErrorResponse {
+                    error: format!("Failed to reset password: {e:?}"),
+                }),
+            )
+                .into_response()
+        }
+    }
 }
 
 #[axum::debug_handler]
@@ -1745,44 +2157,46 @@ pub async fn confirm_password_reset_handler(
 )]
 pub async fn create_permission_group_handler(
     State(state): State<Arc<AppState>>,
-    RequirePermission { user_id: _ }: RequirePermission,
+    RequirePermission { user_id }: RequirePermission,
     Json(payload): Json<CreatePermissionGroupRequest>,
 ) -> impl IntoResponse {
-    let group_id = uuid::Uuid::new_v4().to_string();
+    let cmd = crate::application::commands::CommandFactory::create_permission_group(
+        payload.name,
+        payload.description,
+        payload.category,
+        Some(user_id.clone()), // created_by
+    );
 
-    let mut group = crate::domain::permission_group::PermissionGroup::new(group_id, payload.name);
+    let result = state.command_bus.execute(cmd).await;
 
-    if let Some(description) = payload.description {
-        group = group.with_description(description);
-    }
+    match result {
+        Ok(result_box) => {
+            if let Ok(result_box) =
+                result_box.downcast::<crate::domain::permission_group::PermissionGroup>()
+            {
+                let created_group = *result_box;
+                let response = PermissionGroupResponse {
+                    id: created_group.id,
+                    name: created_group.name,
+                    description: created_group.description,
+                    category: created_group.category,
+                    metadata: created_group.metadata,
+                    is_active: created_group.is_active,
+                    permission_count: 0, // Will be calculated separately if needed
+                };
 
-    if let Some(category) = payload.category {
-        group = group.with_category(category);
-    }
-
-    if let Some(metadata) = payload.metadata {
-        group = group.with_metadata(metadata);
-    }
-
-    match state.permission_group_repo.create_group(group).await {
-        Ok(created_group) => {
-            let response = PermissionGroupResponse {
-                id: created_group.id,
-                name: created_group.name,
-                description: created_group.description,
-                category: created_group.category,
-                metadata: created_group.metadata,
-                is_active: created_group.is_active,
-                permission_count: 0, // Will be calculated separately if needed
-            };
-
-            (axum::http::StatusCode::CREATED, Json(response)).into_response()
+                (axum::http::StatusCode::CREATED, Json(response)).into_response()
+            } else {
+                (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "Invalid result type from create permission group command",
+                )
+                    .into_response()
+            }
         }
-        Err(_) => (
+        Err(e) => (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: "Failed to create permission group".to_string(),
-            }),
+            format!("Failed to create permission group: {e:?}"),
         )
             .into_response(),
     }
@@ -1803,28 +2217,59 @@ pub async fn list_permission_groups_handler(
     State(state): State<Arc<AppState>>,
     RequirePermission { user_id: _ }: RequirePermission,
 ) -> impl IntoResponse {
-    match state.permission_group_repo.list_groups().await {
-        Ok(groups) => {
-            let group_responses: Vec<PermissionGroupResponse> = groups
-                .into_iter()
-                .map(|group| PermissionGroupResponse {
-                    id: group.id,
-                    name: group.name,
-                    description: group.description,
-                    category: group.category,
-                    metadata: group.metadata,
-                    is_active: group.is_active,
-                    permission_count: 0, // TODO: Calculate actual permission count
-                })
-                .collect();
+    let query = crate::application::queries::QueryFactory::list_permission_groups(
+        1,    // page
+        100,  // page_size (large enough for now)
+        None, // name_filter
+        None, // category_filter
+        true, // include_permissions
+        None, // sort_by
+        None, // sort_order
+    );
 
-            let total = group_responses.len();
-            let response = PermissionGroupListResponse {
-                groups: group_responses,
-                total,
-            };
+    let result = state.query_bus.execute(query).await;
 
-            Json(response).into_response()
+    match result {
+        Ok(result_box) => {
+            if let Ok(result_box) = result_box
+                .downcast::<crate::application::queries::PaginatedResult<
+                    crate::domain::permission_group::PermissionGroup,
+                >>()
+            {
+                let paginated_result = *result_box;
+                let mut group_responses: Vec<PermissionGroupResponse> = Vec::new();
+
+                for group in paginated_result.items {
+                    let permission_count = state
+                        .permission_group_repo
+                        .get_permission_count(&group.id)
+                        .await
+                        .unwrap_or(0);
+
+                    group_responses.push(PermissionGroupResponse {
+                        id: group.id,
+                        name: group.name,
+                        description: group.description,
+                        category: group.category,
+                        metadata: group.metadata,
+                        is_active: group.is_active,
+                        permission_count,
+                    });
+                }
+
+                let response = PermissionGroupListResponse {
+                    groups: group_responses,
+                    total: paginated_result.total_count as usize,
+                };
+
+                Json(response).into_response()
+            } else {
+                (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "Invalid result type from list permission groups query",
+                )
+                    .into_response()
+            }
         }
         Err(_) => (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
@@ -1853,32 +2298,58 @@ pub async fn get_permission_group_handler(
     RequirePermission { user_id: _ }: RequirePermission,
     Path(group_id): Path<String>,
 ) -> impl IntoResponse {
-    match state.permission_group_repo.get_group(&group_id).await {
-        Ok(Some(group)) => {
-            let response = PermissionGroupResponse {
-                id: group.id,
-                name: group.name,
-                description: group.description,
-                category: group.category,
-                metadata: group.metadata,
-                is_active: group.is_active,
-                permission_count: 0, // TODO: Calculate actual permission count
-            };
+    let query = crate::application::queries::QueryFactory::get_permission_group(
+        group_id.clone(),
+        true, // include_permissions
+    );
 
-            Json(response).into_response()
+    let result = state.query_bus.execute(query).await;
+
+    match result {
+        Ok(result_box) => {
+            if let Ok(result_box) =
+                result_box.downcast::<Option<crate::domain::permission_group::PermissionGroup>>()
+            {
+                let group_option = *result_box;
+                match group_option {
+                    Some(group) => {
+                        let permission_count = state
+                            .permission_group_repo
+                            .get_permission_count(&group.id)
+                            .await
+                            .unwrap_or(0);
+
+                        let response = PermissionGroupResponse {
+                            id: group.id,
+                            name: group.name,
+                            description: group.description,
+                            category: group.category,
+                            metadata: group.metadata,
+                            is_active: group.is_active,
+                            permission_count,
+                        };
+
+                        Json(response).into_response()
+                    }
+                    None => (
+                        axum::http::StatusCode::NOT_FOUND,
+                        Json(ErrorResponse {
+                            error: "Permission group not found".to_string(),
+                        }),
+                    )
+                        .into_response(),
+                }
+            } else {
+                (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "Invalid result type from get permission group query",
+                )
+                    .into_response()
+            }
         }
-        Ok(None) => (
-            axum::http::StatusCode::NOT_FOUND,
-            Json(ErrorResponse {
-                error: "Permission group not found".to_string(),
-            }),
-        )
-            .into_response(),
-        Err(_) => (
+        Err(e) => (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: "Failed to get permission group".to_string(),
-            }),
+            format!("Failed to get permission group: {e:?}"),
         )
             .into_response(),
     }
@@ -1900,80 +2371,56 @@ pub async fn get_permission_group_handler(
 )]
 pub async fn update_permission_group_handler(
     State(state): State<Arc<AppState>>,
-    RequirePermission { user_id: _ }: RequirePermission,
+    RequirePermission { user_id }: RequirePermission,
     Path(group_id): Path<String>,
     Json(payload): Json<UpdatePermissionGroupRequest>,
 ) -> impl IntoResponse {
-    // First get the existing group
-    let existing_group = match state.permission_group_repo.get_group(&group_id).await {
-        Ok(Some(group)) => group,
-        Ok(None) => {
-            return (
-                axum::http::StatusCode::NOT_FOUND,
-                Json(ErrorResponse {
-                    error: "Permission group not found".to_string(),
-                }),
-            )
-                .into_response();
+    let cmd = crate::application::commands::CommandFactory::update_permission_group(
+        group_id.clone(),
+        payload.name,
+        payload.description,
+        payload.category,
+        payload.metadata,
+        payload.is_active,
+        Some(user_id.clone()), // updated_by
+    );
+
+    let result = state.command_bus.execute(cmd).await;
+
+    match result {
+        Ok(result_box) => {
+            if let Ok(result_box) =
+                result_box.downcast::<crate::domain::permission_group::PermissionGroup>()
+            {
+                let updated_group = *result_box;
+                let permission_count = state
+                    .permission_group_repo
+                    .get_permission_count(&updated_group.id)
+                    .await
+                    .unwrap_or(0);
+
+                let response = PermissionGroupResponse {
+                    id: updated_group.id,
+                    name: updated_group.name,
+                    description: updated_group.description,
+                    category: updated_group.category,
+                    metadata: updated_group.metadata,
+                    is_active: updated_group.is_active,
+                    permission_count,
+                };
+
+                Json(response).into_response()
+            } else {
+                (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "Invalid result type from update permission group command",
+                )
+                    .into_response()
+            }
         }
-        Err(_) => {
-            return (
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "Failed to get permission group".to_string(),
-                }),
-            )
-                .into_response();
-        }
-    };
-
-    // Update the group with new values
-    let mut updated_group = existing_group;
-
-    if let Some(name) = payload.name {
-        updated_group.name = name;
-    }
-
-    if let Some(description) = payload.description {
-        updated_group.description = Some(description);
-    }
-
-    if let Some(category) = payload.category {
-        updated_group.category = Some(category);
-    }
-
-    if let Some(metadata) = payload.metadata {
-        updated_group.metadata = metadata;
-    }
-
-    if let Some(is_active) = payload.is_active {
-        updated_group.set_active_status(is_active);
-    }
-
-    // Save the updated group
-    match state
-        .permission_group_repo
-        .update_group(&updated_group)
-        .await
-    {
-        Ok(_) => {
-            let response = PermissionGroupResponse {
-                id: updated_group.id,
-                name: updated_group.name,
-                description: updated_group.description,
-                category: updated_group.category,
-                metadata: updated_group.metadata,
-                is_active: updated_group.is_active,
-                permission_count: 0, // TODO: Calculate actual permission count
-            };
-
-            Json(response).into_response()
-        }
-        Err(_) => (
+        Err(e) => (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: "Failed to update permission group".to_string(),
-            }),
+            format!("Failed to update permission group: {e:?}"),
         )
             .into_response(),
     }
@@ -1993,16 +2440,21 @@ pub async fn update_permission_group_handler(
 )]
 pub async fn delete_permission_group_handler(
     State(state): State<Arc<AppState>>,
-    RequirePermission { user_id: _ }: RequirePermission,
+    RequirePermission { user_id }: RequirePermission,
     Path(group_id): Path<String>,
 ) -> impl IntoResponse {
-    match state.permission_group_repo.delete_group(&group_id).await {
+    let cmd = crate::application::commands::CommandFactory::delete_permission_group(
+        group_id.clone(),
+        Some(user_id.clone()), // deleted_by
+    );
+
+    let result = state.command_bus.execute(cmd).await;
+
+    match result {
         Ok(_) => axum::http::StatusCode::NO_CONTENT.into_response(),
-        Err(_) => (
+        Err(e) => (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: "Failed to delete permission group".to_string(),
-            }),
+            format!("Failed to delete permission group: {e:?}"),
         )
             .into_response(),
     }
@@ -2025,31 +2477,331 @@ pub async fn get_permissions_in_group_handler(
     RequirePermission { user_id: _ }: RequirePermission,
     Path(group_id): Path<String>,
 ) -> impl IntoResponse {
-    match state
-        .permission_group_repo
-        .get_permissions_in_group(&group_id)
+    let query = crate::application::queries::QueryFactory::get_permissions_in_group(
+        group_id.clone(),
+        1,   // page
+        100, // page_size
+    );
+
+    let result = state.query_bus.execute(query).await;
+
+    match result {
+        Ok(result_box) => {
+            if let Ok(result_box) =
+                result_box.downcast::<crate::interface::PermissionsListResponse>()
+            {
+                let response = *result_box;
+                Json(response).into_response()
+            } else {
+                (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "Invalid result type from get permissions in group query",
+                )
+                    .into_response()
+            }
+        }
+        Err(e) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("Failed to get permissions in group: {e:?}"),
+            }),
+        )
+            .into_response(),
+    }
+}
+
+#[axum::debug_handler]
+#[utoipa::path(
+    get,
+    path = "/v1/iam/rbac/roles/{role_id}",
+    responses(
+        (status = 200, description = "Role retrieved", body = RoleResponse),
+        (status = 403, description = "Insufficient permissions", body = ErrorResponse),
+        (status = 404, description = "Role not found", body = ErrorResponse),
+    ),
+    tags = ["RBAC"],
+    description = "Get a role by ID. Requires rbac:read permission."
+)]
+pub async fn get_role_handler(
+    State(state): State<Arc<AppState>>,
+    RequirePermission { user_id }: RequirePermission,
+    Path(role_id): Path<String>,
+) -> impl IntoResponse {
+    let allowed = state
+        .query_bus
+        .execute(crate::application::queries::QueryFactory::check_permission(
+            user_id.clone(),
+            "rbac:read".to_string(),
+            None,
+        ))
         .await
-    {
-        Ok(permissions) => {
-            let permission_responses: Vec<PermissionResponse> = permissions
-                .into_iter()
-                .map(|perm| PermissionResponse {
-                    id: perm.id,
-                    name: perm.name,
-                })
-                .collect();
+        .map(|result| result.downcast::<bool>().map(|b| *b).unwrap_or(false))
+        .unwrap_or(false);
+    if !allowed {
+        return (
+            axum::http::StatusCode::FORBIDDEN,
+            "Insufficient permissions",
+        )
+            .into_response();
+    }
 
-            let response = PermissionsListResponse {
-                permissions: permission_responses,
-            };
+    let query = crate::application::queries::QueryFactory::get_role_by_id(role_id.clone(), true);
 
-            Json(response).into_response()
+    let result = state.query_bus.execute(query).await;
+
+    match result {
+        Ok(result_box) => {
+            if let Ok(result_box) =
+                result_box.downcast::<Option<crate::application::queries::RoleReadModel>>()
+            {
+                match *result_box {
+                    Some(role) => {
+                        let permissions: Vec<String> =
+                            role.permissions.into_iter().map(|p| p.id).collect();
+                        Json(RoleResponse {
+                            id: role.id,
+                            name: role.name,
+                            permissions,
+                            parent_role_id: None, // TODO: Get from role model
+                        })
+                        .into_response()
+                    }
+                    None => (
+                        axum::http::StatusCode::NOT_FOUND,
+                        Json(ErrorResponse {
+                            error: "Role not found".to_string(),
+                        }),
+                    )
+                        .into_response(),
+                }
+            } else {
+                (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "Invalid result type from get role query",
+                )
+                    .into_response()
+            }
         }
         Err(_) => (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: "Failed to get permissions in group".to_string(),
-            }),
+            "Failed to get role",
+        )
+            .into_response(),
+    }
+}
+
+#[axum::debug_handler]
+#[utoipa::path(
+    get,
+    path = "/v1/iam/rbac/permissions/{permission_id}",
+    responses(
+        (status = 200, description = "Permission retrieved", body = PermissionResponse),
+        (status = 403, description = "Insufficient permissions", body = ErrorResponse),
+        (status = 404, description = "Permission not found", body = ErrorResponse),
+    ),
+    tags = ["RBAC"],
+    description = "Get a permission by ID. Requires rbac:read permission."
+)]
+pub async fn get_permission_handler(
+    State(state): State<Arc<AppState>>,
+    RequirePermission { user_id }: RequirePermission,
+    Path(permission_id): Path<String>,
+) -> impl IntoResponse {
+    let allowed = state
+        .query_bus
+        .execute(crate::application::queries::QueryFactory::check_permission(
+            user_id.clone(),
+            "rbac:read".to_string(),
+            None,
+        ))
+        .await
+        .map(|result| result.downcast::<bool>().map(|b| *b).unwrap_or(false))
+        .unwrap_or(false);
+    if !allowed {
+        return (
+            axum::http::StatusCode::FORBIDDEN,
+            "Insufficient permissions",
+        )
+            .into_response();
+    }
+
+    let query =
+        crate::application::queries::QueryFactory::get_permission_by_id(permission_id.clone());
+
+    let result = state.query_bus.execute(query).await;
+
+    match result {
+        Ok(result_box) => {
+            if let Ok(result_box) =
+                result_box.downcast::<Option<crate::application::queries::PermissionReadModel>>()
+            {
+                match *result_box {
+                    Some(permission) => Json(PermissionResponse {
+                        id: permission.id,
+                        name: permission.name,
+                    })
+                    .into_response(),
+                    None => (
+                        axum::http::StatusCode::NOT_FOUND,
+                        Json(ErrorResponse {
+                            error: "Permission not found".to_string(),
+                        }),
+                    )
+                        .into_response(),
+                }
+            } else {
+                (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "Invalid result type from get permission query",
+                )
+                    .into_response()
+            }
+        }
+        Err(_) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "Failed to get permission",
+        )
+            .into_response(),
+    }
+}
+
+#[axum::debug_handler]
+#[utoipa::path(
+    put,
+    path = "/v1/iam/rbac/roles/{role_id}",
+    request_body = UpdateRoleRequest,
+    responses(
+        (status = 200, description = "Role updated", body = RoleResponse),
+        (status = 403, description = "Insufficient permissions", body = ErrorResponse),
+        (status = 404, description = "Role not found", body = ErrorResponse),
+    ),
+    tags = ["RBAC"],
+    description = "Update a role by ID. Requires rbac:manage permission."
+)]
+pub async fn update_role_handler(
+    State(state): State<Arc<AppState>>,
+    RequirePermission { user_id }: RequirePermission,
+    Path(role_id): Path<String>,
+    Json(payload): Json<UpdateRoleRequest>,
+) -> impl IntoResponse {
+    let allowed = state
+        .query_bus
+        .execute(crate::application::queries::QueryFactory::check_permission(
+            user_id.clone(),
+            "rbac:manage".to_string(),
+            None,
+        ))
+        .await
+        .map(|result| result.downcast::<bool>().map(|b| *b).unwrap_or(false))
+        .unwrap_or(false);
+    if !allowed {
+        return (
+            axum::http::StatusCode::FORBIDDEN,
+            "Insufficient permissions",
+        )
+            .into_response();
+    }
+
+    let cmd = crate::application::commands::CommandFactory::update_role(
+        role_id.clone(),
+        payload.name,
+        Some(user_id.clone()),
+    );
+
+    let result = state.command_bus.execute(cmd).await;
+
+    match result {
+        Ok(result_box) => {
+            if let Ok(result_box) = result_box.downcast::<crate::domain::role::Role>() {
+                let role = *result_box;
+                Json(RoleResponse {
+                    id: role.id,
+                    name: role.name,
+                    permissions: role.permissions,
+                    parent_role_id: role.parent_role_id,
+                })
+                .into_response()
+            } else {
+                (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "Invalid result type from update role command",
+                )
+                    .into_response()
+            }
+        }
+        Err(e) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to update role: {e:?}"),
+        )
+            .into_response(),
+    }
+}
+
+#[axum::debug_handler]
+#[utoipa::path(
+    put,
+    path = "/v1/iam/rbac/permissions/{permission_id}",
+    request_body = UpdatePermissionRequest,
+    responses(
+        (status = 200, description = "Permission updated", body = PermissionResponse),
+        (status = 403, description = "Insufficient permissions", body = ErrorResponse),
+        (status = 404, description = "Permission not found", body = ErrorResponse),
+    ),
+    tags = ["RBAC"],
+    description = "Update a permission by ID. Requires rbac:manage permission."
+)]
+pub async fn update_permission_handler(
+    State(state): State<Arc<AppState>>,
+    RequirePermission { user_id }: RequirePermission,
+    Path(permission_id): Path<String>,
+    Json(payload): Json<UpdatePermissionRequest>,
+) -> impl IntoResponse {
+    let allowed = state
+        .query_bus
+        .execute(crate::application::queries::QueryFactory::check_permission(
+            user_id.clone(),
+            "rbac:manage".to_string(),
+            None,
+        ))
+        .await
+        .map(|result| result.downcast::<bool>().map(|b| *b).unwrap_or(false))
+        .unwrap_or(false);
+    if !allowed {
+        return (
+            axum::http::StatusCode::FORBIDDEN,
+            "Insufficient permissions",
+        )
+            .into_response();
+    }
+
+    let cmd = crate::application::commands::CommandFactory::update_permission(
+        permission_id.clone(),
+        payload.name,
+        Some(user_id.clone()),
+    );
+
+    let result = state.command_bus.execute(cmd).await;
+
+    match result {
+        Ok(result_box) => {
+            if let Ok(result_box) = result_box.downcast::<crate::domain::permission::Permission>() {
+                let permission = *result_box;
+                Json(PermissionResponse {
+                    id: permission.id,
+                    name: permission.name,
+                })
+                .into_response()
+            } else {
+                (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "Invalid result type from update permission command",
+                )
+                    .into_response()
+            }
+        }
+        Err(e) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to update permission: {e:?}"),
         )
             .into_response(),
     }

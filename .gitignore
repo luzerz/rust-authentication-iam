@@ -6,4 +6,4 @@
 .env
 .DS_Store
 coverage
-.sqlx
+.sqlx/*

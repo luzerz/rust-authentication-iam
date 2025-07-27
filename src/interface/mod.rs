@@ -53,7 +53,12 @@ pub struct CreateRoleRequest {
     pub name: String,
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, Deserialize, ToSchema)]
+pub struct UpdateRoleRequest {
+    pub name: String,
+}
+
+#[derive(Serialize, Deserialize, ToSchema)]
 pub struct RoleResponse {
     pub id: String,
     pub name: String,
@@ -78,10 +83,16 @@ pub struct RemoveRoleRequest {
     pub role_id: String,
 }
 
-#[derive(Serialize, Deserialize, ToSchema)]
+#[derive(serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
 pub struct SetParentRoleRequest {
     pub role_id: String,
     pub parent_role_id: Option<String>, // None to remove parent
+}
+
+#[derive(serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct CreateRoleHierarchyRequest {
+    pub parent_role_id: String,
+    pub child_role_id: String,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -118,6 +129,11 @@ pub struct RolePermissionsResponse {
 
 #[derive(Serialize, Deserialize, ToSchema)]
 pub struct CreatePermissionRequest {
+    pub name: String,
+}
+
+#[derive(Serialize, Deserialize, ToSchema)]
+pub struct UpdatePermissionRequest {
     pub name: String,
 }
 
@@ -304,13 +320,15 @@ pub use http_handlers::{
     assign_abac_policy_handler, assign_permission_handler, assign_role_handler,
     change_password_handler, confirm_password_reset_handler, create_abac_policy_handler,
     create_permission_group_handler, create_permission_handler, create_role_handler,
-    delete_abac_policy_handler, delete_permission_group_handler, delete_permission_handler,
-    delete_role_handler, evaluate_abac_policies_handler, get_effective_permissions_handler,
-    get_permission_group_handler, get_permissions_in_group_handler, get_role_hierarchy_handler,
+    create_role_hierarchy_handler, delete_abac_policy_handler, delete_permission_group_handler,
+    delete_permission_handler, delete_role_handler, evaluate_abac_policies_handler,
+    get_effective_permissions_handler, get_permission_group_handler, get_permission_handler,
+    get_permissions_in_group_handler, get_role_handler, get_role_hierarchy_handler,
     list_abac_policies_handler, list_permission_groups_handler, list_permissions_handler,
     list_role_hierarchies_handler, list_role_permissions_handler, list_roles_handler,
     list_user_roles_handler, login_handler, logout_handler, refresh_token_handler,
     register_user_handler, remove_permission_handler, remove_role_handler,
     request_password_reset_handler, set_parent_role_handler, update_abac_policy_handler,
-    update_permission_group_handler, validate_token_handler,
+    update_permission_group_handler, update_permission_handler, update_role_handler,
+    validate_token_handler,
 };

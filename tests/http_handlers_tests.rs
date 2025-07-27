@@ -1,26 +1,16 @@
-use authentication_service::application::handlers::LoginUserHandler;
-use authentication_service::application::services::{
-    AuthService, AuthZService, PasswordService, TokenService,
-};
-use authentication_service::domain::user::User;
-use authentication_service::infrastructure::{
-    AbacPolicyRepository, InMemoryAbacPolicyRepository, InMemoryPermissionGroupRepository,
-    InMemoryPermissionRepository, InMemoryRefreshTokenRepository, InMemoryRoleRepository,
-    InMemoryUserRepository, PermissionRepository, RoleRepository,
-};
-use authentication_service::interface::app_state::AppState;
-use authentication_service::interface::http_handlers::{
-    assign_abac_policy_handler, assign_permission_handler, assign_role_handler,
-    create_abac_policy_handler, create_permission_handler, create_role_handler,
-    delete_abac_policy_handler, delete_permission_handler, delete_role_handler,
-    list_abac_policies_handler, list_permissions_handler, list_roles_handler, login_handler,
-    logout_handler, refresh_token_handler, remove_permission_handler, remove_role_handler,
-    validate_token_handler,
-};
-use authentication_service::interface::{
-    AbacPolicyRequest, AssignAbacPolicyRequest, AssignPermissionRequest, AssignRoleRequest,
-    CreatePermissionRequest, CreateRoleRequest, LoginRequest, LogoutRequest, RefreshTokenRequest,
-    RemovePermissionRequest, RemoveRoleRequest, ValidateTokenRequest,
+use authentication_service::{
+    application::{
+        command_bus::CommandBus,
+        query_bus::QueryBus,
+        services::{AuthorizationService, PasswordResetService, PasswordService, TokenService},
+    },
+    domain::user::User,
+    infrastructure::{
+        AbacPolicyRepository, InMemoryAbacPolicyRepository, InMemoryPermissionGroupRepository,
+        InMemoryPermissionRepository, InMemoryRefreshTokenRepository, InMemoryRoleRepository,
+        InMemoryUserRepository, PermissionRepository, RoleRepository,
+    },
+    interface::{AppState, *},
 };
 use axum::{
     Router,
@@ -37,7 +27,7 @@ fn setup_test_env() {
     }
 }
 
-fn mock_app_state() -> AppState {
+async fn mock_app_state() -> AppState {
     setup_test_env();
 
     // Create a test user with hashed password
@@ -48,6 +38,7 @@ fn mock_app_state() -> AppState {
         password_hash,
         roles: vec!["user".to_string()],
         is_locked: false,
+        failed_login_attempts: 0,
     };
 
     let user_repo = Arc::new(InMemoryUserRepository::new(vec![test_user]))
@@ -59,33 +50,71 @@ fn mock_app_state() -> AppState {
         Arc::new(InMemoryAbacPolicyRepository::new());
     let permission_repo: Arc<dyn PermissionRepository> =
         Arc::new(InMemoryPermissionRepository::new());
-    let auth_service = Arc::new(AuthService);
+    let permission_group_repo = Arc::new(InMemoryPermissionGroupRepository::new());
     let token_service = Arc::new(TokenService);
     let password_service = Arc::new(PasswordService);
-    let handler = Arc::new(LoginUserHandler);
-    let authz_service = Arc::new(AuthZService {
-        role_repo: role_repo.clone(),
-        permission_repo: permission_repo.clone(),
-        abac_repo: abac_policy_repo.clone(),
-    });
+
+    // Create CQRS buses
+    let command_bus = Arc::new(CommandBus::new());
+    let query_bus = Arc::new(QueryBus::new());
+
+    // Register essential command handlers
+    command_bus
+        .register_handler::<authentication_service::application::commands::AuthenticateUserCommand, _>(
+            authentication_service::application::command_handlers::AuthenticateUserCommandHandler::new(
+                user_repo.clone(),
+            ),
+        )
+        .await;
+
+    // Register essential query handlers
+    query_bus
+        .register_handler::<authentication_service::application::queries::CheckPermissionQuery, _>(
+            authentication_service::application::query_handlers::CheckPermissionQueryHandler::new(
+                role_repo.clone(),
+                permission_repo.clone(),
+                abac_policy_repo.clone(),
+            ),
+        )
+        .await;
+
+    query_bus
+        .register_handler::<authentication_service::application::queries::ListRolesQuery, _>(
+            authentication_service::application::query_handlers::ListRolesQueryHandler::new(
+                role_repo.clone(),
+                permission_repo.clone(),
+            ),
+        )
+        .await;
+
+    query_bus
+        .register_handler::<authentication_service::application::queries::ListPermissionsQuery, _>(
+            authentication_service::application::query_handlers::ListPermissionsQueryHandler::new(
+                permission_repo.clone(),
+                permission_group_repo.clone(),
+            ),
+        )
+        .await;
+
     AppState {
         user_repo,
-        refresh_token_repo,
-        auth_service,
-        token_service,
-        password_service,
-        handler,
         role_repo,
         permission_repo,
-        permission_group_repo: Arc::new(InMemoryPermissionGroupRepository::new()),
         abac_policy_repo,
-        authz_service,
+        permission_group_repo,
+        refresh_token_repo,
+        token_service,
+        password_service,
+        password_reset_service: Arc::new(PasswordResetService),
+        authorization_service: Arc::new(AuthorizationService),
+        command_bus,
+        query_bus,
     }
 }
 
 #[tokio::test]
 async fn test_login_handler_success() {
-    let state = mock_app_state();
+    let state = mock_app_state().await;
     let app = Router::new()
         .route("/v1/iam/auth/login", axum::routing::post(login_handler))
         .with_state(Arc::new(state));
@@ -105,7 +134,7 @@ async fn test_login_handler_success() {
 
 #[tokio::test]
 async fn test_login_handler_invalid_credentials() {
-    let state = mock_app_state();
+    let state = mock_app_state().await;
     let app = Router::new()
         .route("/v1/iam/auth/login", axum::routing::post(login_handler))
         .with_state(Arc::new(state));
@@ -125,7 +154,7 @@ async fn test_login_handler_invalid_credentials() {
 
 #[tokio::test]
 async fn test_validate_token_handler_missing_token() {
-    let state = mock_app_state();
+    let state = mock_app_state().await;
     let app = Router::new()
         .route(
             "/v1/iam/validate-token",
@@ -152,7 +181,7 @@ async fn test_validate_token_handler_missing_token() {
 
 #[tokio::test]
 async fn test_refresh_token_handler_invalid_token() {
-    let state = mock_app_state();
+    let state = mock_app_state().await;
     let app = Router::new()
         .route(
             "/v1/iam/refresh-token",
@@ -174,7 +203,7 @@ async fn test_refresh_token_handler_invalid_token() {
 
 #[tokio::test]
 async fn test_logout_handler_invalid_token() {
-    let state = mock_app_state();
+    let state = mock_app_state().await;
     let app = Router::new()
         .route("/v1/iam/auth/logout", axum::routing::post(logout_handler))
         .with_state(Arc::new(state));
@@ -193,7 +222,7 @@ async fn test_logout_handler_invalid_token() {
 
 #[tokio::test]
 async fn test_create_role_handler() {
-    let state = mock_app_state();
+    let state = mock_app_state().await;
 
     // Create a valid JWT token for testing
     let token_service = TokenService;
@@ -203,11 +232,13 @@ async fn test_create_role_handler() {
         password_hash: "".to_string(),
         roles: vec!["user".to_string()],
         is_locked: false,
+        failed_login_attempts: 0,
     };
     let refresh_token_repo = Arc::new(InMemoryRefreshTokenRepository::new());
     let (access_token, _) = token_service
-        .issue_tokens(&test_user, refresh_token_repo)
-        .await;
+        .issue_tokens(&test_user, &refresh_token_repo)
+        .await
+        .unwrap();
 
     let app = Router::new()
         .route("/v1/iam/roles", axum::routing::post(create_role_handler))
@@ -230,7 +261,7 @@ async fn test_create_role_handler() {
 
 #[tokio::test]
 async fn test_list_roles_handler() {
-    let state = mock_app_state();
+    let state = mock_app_state().await;
     let app = Router::new()
         .route("/v1/iam/roles", axum::routing::get(list_roles_handler))
         .with_state(Arc::new(state));
@@ -245,7 +276,7 @@ async fn test_list_roles_handler() {
 
 #[tokio::test]
 async fn test_delete_role_handler() {
-    let state = mock_app_state();
+    let state = mock_app_state().await;
     let app = Router::new()
         .route(
             "/v1/iam/roles/{role_id}",
@@ -266,7 +297,7 @@ async fn test_delete_role_handler() {
 
 #[tokio::test]
 async fn test_assign_role_handler() {
-    let state = mock_app_state();
+    let state = mock_app_state().await;
     let app = Router::new()
         .route(
             "/v1/iam/roles/assign",
@@ -292,7 +323,7 @@ async fn test_assign_role_handler() {
 
 #[tokio::test]
 async fn test_remove_role_handler() {
-    let state = mock_app_state();
+    let state = mock_app_state().await;
     let app = Router::new()
         .route(
             "/v1/iam/roles/remove",
@@ -318,7 +349,7 @@ async fn test_remove_role_handler() {
 
 #[tokio::test]
 async fn test_create_permission_handler() {
-    let state = mock_app_state();
+    let state = mock_app_state().await;
     let app = Router::new()
         .route(
             "/v1/iam/permissions",
@@ -343,7 +374,7 @@ async fn test_create_permission_handler() {
 
 #[tokio::test]
 async fn test_list_permissions_handler() {
-    let state = mock_app_state();
+    let state = mock_app_state().await;
     let app = Router::new()
         .route(
             "/v1/iam/permissions",
@@ -361,7 +392,7 @@ async fn test_list_permissions_handler() {
 
 #[tokio::test]
 async fn test_delete_permission_handler() {
-    let state = mock_app_state();
+    let state = mock_app_state().await;
     let app = Router::new()
         .route(
             "/v1/iam/permissions/{permission_id}",
@@ -382,7 +413,7 @@ async fn test_delete_permission_handler() {
 
 #[tokio::test]
 async fn test_assign_permission_handler() {
-    let state = mock_app_state();
+    let state = mock_app_state().await;
     let app = Router::new()
         .route(
             "/v1/iam/permissions/assign",
@@ -408,7 +439,7 @@ async fn test_assign_permission_handler() {
 
 #[tokio::test]
 async fn test_remove_permission_handler() {
-    let state = mock_app_state();
+    let state = mock_app_state().await;
     let app = Router::new()
         .route(
             "/v1/iam/permissions/remove",
@@ -434,7 +465,7 @@ async fn test_remove_permission_handler() {
 
 #[tokio::test]
 async fn test_create_abac_policy_handler() {
-    let state = mock_app_state();
+    let state = mock_app_state().await;
     let app = Router::new()
         .route(
             "/v1/iam/abac-policies",
@@ -463,7 +494,7 @@ async fn test_create_abac_policy_handler() {
 
 #[tokio::test]
 async fn test_list_abac_policies_handler() {
-    let state = mock_app_state();
+    let state = mock_app_state().await;
     let app = Router::new()
         .route(
             "/v1/iam/abac-policies",
@@ -484,7 +515,7 @@ async fn test_list_abac_policies_handler() {
 
 #[tokio::test]
 async fn test_delete_abac_policy_handler() {
-    let state = mock_app_state();
+    let state = mock_app_state().await;
     let app = Router::new()
         .route(
             "/v1/iam/abac-policies/{policy_id}",
@@ -505,7 +536,7 @@ async fn test_delete_abac_policy_handler() {
 
 #[tokio::test]
 async fn test_assign_abac_policy_handler() {
-    let state = mock_app_state();
+    let state = mock_app_state().await;
     let app = Router::new()
         .route(
             "/v1/iam/abac-policies/assign",
