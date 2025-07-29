@@ -18,7 +18,7 @@ pub enum ConflictResolutionStrategy {
     FirstMatch,     // First matching policy wins (current behavior)
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub enum AbacEffect {
     Allow,
     Deny,

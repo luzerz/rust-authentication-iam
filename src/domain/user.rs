@@ -8,6 +8,7 @@ pub struct User {
     pub password_hash: String,
     pub roles: Vec<String>, // role IDs
     pub is_locked: bool,
+    pub failed_login_attempts: u32,
 }
 
 impl User {
@@ -19,6 +20,7 @@ impl User {
             password_hash,
             roles: Vec::new(),
             is_locked: false,
+            failed_login_attempts: 0,
         }
     }
 
@@ -53,21 +55,36 @@ impl User {
     pub fn unlock_account(&mut self) {
         self.is_locked = false;
     }
+
+    /// Increments failed login attempts.
+    pub fn increment_failed_login_attempts(&mut self) {
+        self.failed_login_attempts += 1;
+    }
+
+    /// Resets failed login attempts to zero.
+    pub fn reset_failed_login_attempts(&mut self) {
+        self.failed_login_attempts = 0;
+    }
+
+    /// Returns true if the account is locked.
+    pub fn is_locked(&self) -> bool {
+        self.is_locked
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use bcrypt::{DEFAULT_COST, hash};
+    use crate::domain::user::User;
 
     fn create_test_user() -> User {
-        let password_hash = hash("password123", DEFAULT_COST).unwrap();
+        let password_hash = bcrypt::hash("password", 4).unwrap(); // Use cost 4 for faster tests
         User {
             id: "user1".to_string(),
             email: "test@example.com".to_string(),
             password_hash,
             roles: vec![],
             is_locked: false,
+            failed_login_attempts: 0,
         }
     }
 
@@ -85,7 +102,7 @@ mod tests {
     fn test_password_verification() {
         let user = create_test_user();
 
-        assert!(user.verify_password("password123").unwrap());
+        assert!(user.verify_password("password").unwrap());
         assert!(!user.verify_password("wrongpassword").unwrap());
     }
 

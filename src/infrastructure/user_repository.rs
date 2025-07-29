@@ -135,6 +135,7 @@ impl UserRepository for PostgresUserRepository {
             password_hash: row.password_hash,
             roles,
             is_locked: row.is_locked,
+            failed_login_attempts: 0, // Default value for existing users
         })
     }
 
@@ -213,6 +214,7 @@ impl UserRepository for PostgresUserRepository {
                     password_hash: row.password_hash,
                     roles,
                     is_locked: row.is_locked,
+                    failed_login_attempts: 0, // Default value for existing users
                 }))
             }
             None => Ok(None),
@@ -252,7 +254,7 @@ impl RefreshTokenRepository for PostgresRefreshTokenRepository {
         .bind(&token.jti)
         .bind(&token.user_id)
         .bind(token.expires_at)
-        .bind(token.revoked)
+        .bind(false) // Default to not revoked
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -314,10 +316,283 @@ impl RefreshTokenRepository for InMemoryRefreshTokenRepository {
     }
 }
 
-// Expected users table schema:
-// CREATE TABLE users (
-//   id TEXT PRIMARY KEY,
-//   email TEXT UNIQUE NOT NULL,
-//   password_hash TEXT NOT NULL,
-//   is_locked BOOLEAN NOT NULL DEFAULT FALSE
-// );
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::user::User;
+
+    fn create_test_user(id: &str, email: &str) -> User {
+        let mut user = User::new(
+            id.to_string(),
+            email.to_string(),
+            "hashed_password".to_string(),
+        );
+        user.add_role("user".to_string());
+        user
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_user_repository_find_by_email() {
+        let user = create_test_user("user-1", "test@example.com");
+        let repo = InMemoryUserRepository::new(vec![user.clone()]);
+
+        let result = repo.find_by_email("test@example.com").await;
+        assert!(result.is_some());
+        let found_user = result.unwrap();
+        assert_eq!(found_user.id, "user-1");
+        assert_eq!(found_user.email, "test@example.com");
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_user_repository_find_by_email_not_found() {
+        let repo = InMemoryUserRepository::new(vec![]);
+
+        let result = repo.find_by_email("nonexistent@example.com").await;
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_user_repository_create_user() {
+        let repo = InMemoryUserRepository::new(vec![]);
+        let user = create_test_user("user-1", "test@example.com");
+
+        let result = repo.create_user(user.clone()).await;
+        assert!(result.is_ok());
+        let created_user = result.unwrap();
+        assert_eq!(created_user.id, "user-1");
+        assert_eq!(created_user.email, "test@example.com");
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_user_repository_create_user_duplicate() {
+        let user1 = create_test_user("user-1", "test@example.com");
+        let repo = InMemoryUserRepository::new(vec![user1.clone()]);
+        let user2 = create_test_user("user-2", "test@example.com");
+
+        // Should overwrite existing user with same email
+        let result = repo.create_user(user2.clone()).await;
+        assert!(result.is_ok());
+        let created_user = result.unwrap();
+        assert_eq!(created_user.id, "user-2");
+        assert_eq!(created_user.email, "test@example.com");
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_user_repository_update_user() {
+        let user = create_test_user("user-1", "test@example.com");
+        let repo = InMemoryUserRepository::new(vec![user.clone()]);
+
+        let mut updated_user = user.clone();
+        updated_user.roles = vec!["admin".to_string()];
+
+        let result = repo.update_user(&updated_user).await;
+        assert!(result.is_ok());
+
+        // Verify user was updated
+        let found_user = repo.find_by_email("test@example.com").await.unwrap();
+        assert_eq!(found_user.roles, vec!["admin".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_user_repository_update_user_not_found() {
+        let repo = InMemoryUserRepository::new(vec![]);
+        let user = create_test_user("user-1", "test@example.com");
+
+        let result = repo.update_user(&user).await;
+        assert!(result.is_ok()); // In-memory repo creates user if not found
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_user_repository_update_password() {
+        let user = create_test_user("user-1", "test@example.com");
+        let repo = InMemoryUserRepository::new(vec![user.clone()]);
+
+        let result = repo.update_password("user-1", "new_hashed_password").await;
+        assert!(result.is_ok());
+
+        // Verify password was updated
+        let found_user = repo.find_by_email("test@example.com").await.unwrap();
+        assert_eq!(found_user.password_hash, "new_hashed_password");
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_user_repository_update_password_not_found() {
+        let repo = InMemoryUserRepository::new(vec![]);
+
+        let result = repo
+            .update_password("nonexistent-user", "new_hashed_password")
+            .await;
+        assert!(result.is_ok()); // In-memory repo doesn't error on non-existent user
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_user_repository_find_by_id() {
+        let user = create_test_user("user-1", "test@example.com");
+        let repo = InMemoryUserRepository::new(vec![user.clone()]);
+
+        let result = repo.find_by_id("user-1").await;
+        assert!(result.is_ok());
+        let found_user = result.unwrap().unwrap();
+        assert_eq!(found_user.id, "user-1");
+        assert_eq!(found_user.email, "test@example.com");
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_user_repository_find_by_id_not_found() {
+        let repo = InMemoryUserRepository::new(vec![]);
+
+        let result = repo.find_by_id("nonexistent-user").await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_user_repository_multiple_users() {
+        let user1 = create_test_user("user-1", "user1@example.com");
+        let user2 = create_test_user("user-2", "user2@example.com");
+        let repo = InMemoryUserRepository::new(vec![user1.clone(), user2.clone()]);
+
+        // Find by email
+        let found_user1 = repo.find_by_email("user1@example.com").await.unwrap();
+        assert_eq!(found_user1.id, "user-1");
+
+        let found_user2 = repo.find_by_email("user2@example.com").await.unwrap();
+        assert_eq!(found_user2.id, "user-2");
+
+        // Find by ID
+        let found_user1_by_id = repo.find_by_id("user-1").await.unwrap().unwrap();
+        assert_eq!(found_user1_by_id.email, "user1@example.com");
+
+        let found_user2_by_id = repo.find_by_id("user-2").await.unwrap().unwrap();
+        assert_eq!(found_user2_by_id.email, "user2@example.com");
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_user_repository_empty() {
+        let repo = InMemoryUserRepository::new(vec![]);
+
+        // Find by email
+        let result = repo.find_by_email("test@example.com").await;
+        assert!(result.is_none());
+
+        // Find by ID
+        let result = repo.find_by_id("user-1").await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    // Refresh Token Repository Tests
+    #[tokio::test]
+    async fn test_in_memory_refresh_token_repository_insert() {
+        let repo = InMemoryRefreshTokenRepository::new();
+        let token = crate::application::services::RefreshToken {
+            jti: "token-1".to_string(),
+            user_id: "user-1".to_string(),
+            expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+        };
+
+        let result = repo.insert(token).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_refresh_token_repository_is_valid() {
+        let repo = InMemoryRefreshTokenRepository::new();
+        let token = crate::application::services::RefreshToken {
+            jti: "token-1".to_string(),
+            user_id: "user-1".to_string(),
+            expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+        };
+
+        // Insert token
+        repo.insert(token).await.unwrap();
+
+        // Check if valid
+        let result = repo.is_valid("token-1").await;
+        assert!(result.is_ok());
+        assert!(result.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_refresh_token_repository_is_valid_not_found() {
+        let repo = InMemoryRefreshTokenRepository::new();
+
+        let result = repo.is_valid("nonexistent-token").await;
+        assert!(result.is_ok());
+        assert!(!result.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_refresh_token_repository_revoke() {
+        let repo = InMemoryRefreshTokenRepository::new();
+        let token = crate::application::services::RefreshToken {
+            jti: "token-1".to_string(),
+            user_id: "user-1".to_string(),
+            expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+        };
+
+        // Insert token
+        repo.insert(token).await.unwrap();
+
+        // Verify token is valid
+        let result = repo.is_valid("token-1").await;
+        assert!(result.unwrap());
+
+        // Revoke token
+        let result = repo.revoke("token-1").await;
+        assert!(result.is_ok());
+
+        // Verify token is no longer valid
+        let result = repo.is_valid("token-1").await;
+        assert!(result.is_ok());
+        assert!(!result.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_refresh_token_repository_revoke_not_found() {
+        let repo = InMemoryRefreshTokenRepository::new();
+
+        let result = repo.revoke("nonexistent-token").await;
+        assert!(result.is_ok()); // Revoking non-existent token doesn't error
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_refresh_token_repository_default_implementation() {
+        let repo = InMemoryRefreshTokenRepository::default();
+
+        // Test that default creates an empty repository
+        let result = repo.is_valid("any-token").await;
+        assert!(result.is_ok());
+        assert!(!result.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_refresh_token_repository_multiple_tokens() {
+        let repo = InMemoryRefreshTokenRepository::new();
+        let token1 = crate::application::services::RefreshToken {
+            jti: "token-1".to_string(),
+            user_id: "user-1".to_string(),
+            expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+        };
+        let token2 = crate::application::services::RefreshToken {
+            jti: "token-2".to_string(),
+            user_id: "user-2".to_string(),
+            expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+        };
+
+        // Insert tokens
+        repo.insert(token1).await.unwrap();
+        repo.insert(token2).await.unwrap();
+
+        // Verify both tokens are valid
+        assert!(repo.is_valid("token-1").await.unwrap());
+        assert!(repo.is_valid("token-2").await.unwrap());
+
+        // Revoke one token
+        repo.revoke("token-1").await.unwrap();
+
+        // Verify only one token is still valid
+        assert!(!repo.is_valid("token-1").await.unwrap());
+        assert!(repo.is_valid("token-2").await.unwrap());
+    }
+}
