@@ -225,9 +225,7 @@ jobs:
         run: cargo sqlx prepare --database-url $DATABASE_URL
       - name: Run code coverage
         #run: cargo tarpaulin --out Xml --all --release --fail-under 10
-        run: |
-          echo "DATABASE_URL: $DATABASE_URL"
-          export DATABASE_URL=$DATABASE_URL && cargo tarpaulin --out Xml --all --release --exclude-files "src/main.rs" --exclude-files "src/infrastructure/*.rs" --exclude-files "src/interface/*.rs" --exclude-files "src/application/*.rs"
+        run:  cargo tarpaulin --out Xml --all --release --exclude-files "src/main.rs" --exclude-files "src/infrastructure/*.rs" --exclude-files "src/interface/*.rs" --exclude-files "src/application/*.rs"
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v3
         with:
@@ -292,7 +290,7 @@ jobs:
         run: cargo build --release
       - name: Run tests with coverage for SonarCloud
         run: |
-          cargo tarpaulin --out Xml --all --release --output-dir target/sonar
+          cargo tarpaulin --out Xml --all --release --output-dir target/sonar --exclude-files "src/main.rs" --exclude-files "src/infrastructure/*.rs" --exclude-files "src/interface/*.rs" --exclude-files "src/application/*.rs"
       - name: SonarCloud Scan
         uses: sonarsource/sonarcloud-github-action@v5.0.0
         env:
