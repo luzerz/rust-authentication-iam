@@ -29,7 +29,6 @@ use async_trait::async_trait;
 use std::sync::Arc;
 use tracing::instrument;
 
-
 // ============================================================================
 // COMMAND HANDLERS
 // ============================================================================
@@ -1421,8 +1420,8 @@ mod tests {
         ChangePasswordCommand, CreatePermissionCommand, CreateRoleCommand, CreateUserCommand,
     };
     use crate::infrastructure::{
-        InMemoryAbacPolicyRepository, InMemoryPermissionGroupRepository,
-        InMemoryPermissionRepository, InMemoryRoleRepository, InMemoryUserRepository,
+        InMemoryPermissionGroupRepository, InMemoryPermissionRepository, InMemoryRoleRepository,
+        InMemoryUserRepository,
     };
     use std::sync::Arc;
 
@@ -1656,6 +1655,4 @@ mod tests {
         let result = handler.handle(command).await;
         assert!(result.is_ok());
     }
-
-
 }

@@ -270,7 +270,7 @@ mod tests {
     #[tokio::test]
     async fn test_in_memory_audit_repository_log_event() {
         let repo = InMemoryAuditRepository::new();
-        
+
         let event = AuditEvent {
             id: Uuid::new_v4().to_string(),
             timestamp: Utc::now(),
@@ -287,7 +287,10 @@ mod tests {
         assert!(result.is_ok());
 
         // Verify the event was stored
-        let events = repo.get_events_for_user("test-user-123", Some(10)).await.unwrap();
+        let events = repo
+            .get_events_for_user("test-user-123", Some(10))
+            .await
+            .unwrap();
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].id, event.id);
     }
@@ -295,7 +298,7 @@ mod tests {
     #[tokio::test]
     async fn test_in_memory_audit_repository_get_events_for_user() {
         let repo = InMemoryAuditRepository::new();
-        
+
         // Add multiple events for the same user
         for i in 0..5 {
             let event = AuditEvent {
@@ -313,22 +316,31 @@ mod tests {
         }
 
         // Test getting events for specific user
-        let events = repo.get_events_for_user("test-user-123", Some(10)).await.unwrap();
+        let events = repo
+            .get_events_for_user("test-user-123", Some(10))
+            .await
+            .unwrap();
         assert_eq!(events.len(), 5);
 
         // Test limit
-        let events = repo.get_events_for_user("test-user-123", Some(3)).await.unwrap();
+        let events = repo
+            .get_events_for_user("test-user-123", Some(3))
+            .await
+            .unwrap();
         assert_eq!(events.len(), 3);
 
         // Test default limit
-        let events = repo.get_events_for_user("test-user-123", None).await.unwrap();
+        let events = repo
+            .get_events_for_user("test-user-123", None)
+            .await
+            .unwrap();
         assert_eq!(events.len(), 5); // Should return all 5 events
     }
 
     #[tokio::test]
     async fn test_in_memory_audit_repository_get_events_by_type() {
         let repo = InMemoryAuditRepository::new();
-        
+
         // Add events of different types
         let event_types = vec![
             AuditEventType::Login,
@@ -359,7 +371,10 @@ mod tests {
 
         let logout_events = repo.get_events_by_type("Logout", Some(10)).await.unwrap();
         assert_eq!(logout_events.len(), 1);
-        assert!(matches!(logout_events[0].event_type, AuditEventType::Logout));
+        assert!(matches!(
+            logout_events[0].event_type,
+            AuditEventType::Logout
+        ));
 
         // Test limit
         let events = repo.get_events_by_type("Login", Some(1)).await.unwrap();
@@ -373,7 +388,7 @@ mod tests {
     #[tokio::test]
     async fn test_in_memory_audit_repository_get_recent_events() {
         let repo = InMemoryAuditRepository::new();
-        
+
         // Add multiple events
         for i in 0..10 {
             let event = AuditEvent {
@@ -406,7 +421,7 @@ mod tests {
     #[tokio::test]
     async fn test_in_memory_audit_repository_error_event() {
         let repo = InMemoryAuditRepository::new();
-        
+
         let event = AuditEvent {
             id: Uuid::new_v4().to_string(),
             timestamp: Utc::now(),
@@ -423,22 +438,34 @@ mod tests {
         assert!(result.is_ok());
 
         // Verify the error event was stored correctly
-        let events = repo.get_events_for_user("test-user-123", Some(10)).await.unwrap();
+        let events = repo
+            .get_events_for_user("test-user-123", Some(10))
+            .await
+            .unwrap();
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].success, false);
-        assert_eq!(events[0].error_message, Some("Too many failed login attempts".to_string()));
+        assert_eq!(
+            events[0].error_message,
+            Some("Too many failed login attempts".to_string())
+        );
     }
 
     #[tokio::test]
     async fn test_in_memory_audit_repository_empty_results() {
         let repo = InMemoryAuditRepository::new();
-        
+
         // Test getting events for non-existent user
-        let events = repo.get_events_for_user("non-existent", Some(10)).await.unwrap();
+        let events = repo
+            .get_events_for_user("non-existent", Some(10))
+            .await
+            .unwrap();
         assert_eq!(events.len(), 0);
 
         // Test getting events by non-existent type
-        let events = repo.get_events_by_type("NonExistentType", Some(10)).await.unwrap();
+        let events = repo
+            .get_events_by_type("NonExistentType", Some(10))
+            .await
+            .unwrap();
         assert_eq!(events.len(), 0);
 
         // Test getting recent events from empty repository
@@ -449,7 +476,7 @@ mod tests {
     #[tokio::test]
     async fn test_in_memory_audit_repository_default_implementation() {
         let repo = InMemoryAuditRepository::default();
-        
+
         let event = AuditEvent {
             id: Uuid::new_v4().to_string(),
             timestamp: Utc::now(),

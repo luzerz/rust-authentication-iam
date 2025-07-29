@@ -580,7 +580,9 @@ mod tests {
         updated_policy.name = "Updated Policy".to_string();
         updated_policy.effect = AbacEffect::Deny;
 
-        let result = repo.update_policy("test-policy", updated_policy.clone()).await;
+        let result = repo
+            .update_policy("test-policy", updated_policy.clone())
+            .await;
         assert!(result.is_ok());
         let updated = result.unwrap();
         assert_eq!(updated.name, "Updated Policy");
@@ -675,8 +677,12 @@ mod tests {
         repo.create_policy(policy.clone()).await.unwrap();
 
         // Assign policy to user twice
-        repo.assign_policy_to_user("user-1", "test-policy").await.unwrap();
-        repo.assign_policy_to_user("user-1", "test-policy").await.unwrap();
+        repo.assign_policy_to_user("user-1", "test-policy")
+            .await
+            .unwrap();
+        repo.assign_policy_to_user("user-1", "test-policy")
+            .await
+            .unwrap();
 
         // Get policies for user
         let result = repo.get_policies_for_user("user-1").await;
@@ -734,8 +740,12 @@ mod tests {
         repo.create_policy(policy.clone()).await.unwrap();
 
         // Assign policy to user and role
-        repo.assign_policy_to_user("user-1", "test-policy").await.unwrap();
-        repo.assign_policy_to_role("role-1", "test-policy").await.unwrap();
+        repo.assign_policy_to_user("user-1", "test-policy")
+            .await
+            .unwrap();
+        repo.assign_policy_to_role("role-1", "test-policy")
+            .await
+            .unwrap();
 
         // Verify assignments exist
         let user_policies = repo.get_policies_for_user("user-1").await.unwrap();
@@ -764,8 +774,12 @@ mod tests {
         repo.create_policy(policy2.clone()).await.unwrap();
 
         // Assign both policies to user
-        repo.assign_policy_to_user("user-1", "policy-1").await.unwrap();
-        repo.assign_policy_to_user("user-1", "policy-2").await.unwrap();
+        repo.assign_policy_to_user("user-1", "policy-1")
+            .await
+            .unwrap();
+        repo.assign_policy_to_user("user-1", "policy-2")
+            .await
+            .unwrap();
 
         // Get policies for user
         let result = repo.get_policies_for_user("user-1").await;
@@ -779,7 +793,7 @@ mod tests {
     #[tokio::test]
     async fn test_in_memory_abac_policy_repository_default_implementation() {
         let repo = InMemoryAbacPolicyRepository::default();
-        
+
         // Test that default creates an empty repository
         let policies = repo.list_policies().await.unwrap();
         assert_eq!(policies.len(), 0);

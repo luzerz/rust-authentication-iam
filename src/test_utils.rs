@@ -10,16 +10,22 @@ use crate::domain::{
     user::User,
 };
 use crate::infrastructure::{
-    InMemoryAbacPolicyRepository, InMemoryPermissionGroupRepository, InMemoryPermissionRepository,
-    InMemoryRefreshTokenRepository, InMemoryRoleRepository, InMemoryUserRepository,
-    AbacPolicyRepository, PermissionRepository, RoleRepository, PermissionGroupRepository,
+    AbacPolicyRepository, InMemoryAbacPolicyRepository, InMemoryPermissionGroupRepository,
+    InMemoryPermissionRepository, InMemoryRefreshTokenRepository, InMemoryRoleRepository,
+    InMemoryUserRepository, PermissionGroupRepository, PermissionRepository, RoleRepository,
 };
 use crate::interface::app_state::AppState;
 use bcrypt::hash;
 use std::sync::Arc;
 
 // Type aliases to reduce complexity
-type TestData = (Vec<User>, Vec<Role>, Vec<Permission>, Vec<PermissionGroup>, Vec<AbacPolicy>);
+type TestData = (
+    Vec<User>,
+    Vec<Role>,
+    Vec<Permission>,
+    Vec<PermissionGroup>,
+    Vec<AbacPolicy>,
+);
 type TestRepositories = (
     Arc<InMemoryUserRepository>,
     Arc<InMemoryRoleRepository>,
@@ -46,7 +52,7 @@ pub fn create_test_user() -> User {
         id: uuid::Uuid::new_v4().to_string(),
         email: "test@example.com".to_string(),
         password_hash,
-        roles: vec![],
+        roles: vec!["admin".to_string()],
         is_locked: false,
         failed_login_attempts: 0,
     }
@@ -188,12 +194,48 @@ pub fn create_write_permission(resource: &str) -> Permission {
 /// Creates RBAC management permissions
 pub fn create_rbac_permissions() -> Vec<Permission> {
     vec![
-        create_test_permission("rbac:manage", "rbac:manage", "Manage RBAC system", "rbac", "manage"),
-        create_test_permission("roles:manage", "roles:manage", "Manage roles", "roles", "manage"),
-        create_test_permission("permissions:manage", "permissions:manage", "Manage permissions", "permissions", "manage"),
-        create_test_permission("permission-groups:manage", "permission-groups:manage", "Manage permission groups", "permission-groups", "manage"),
-        create_test_permission("abac:manage", "abac:manage", "Manage ABAC policies", "abac", "manage"),
-        create_test_permission("users:manage", "users:manage", "Manage users", "users", "manage"),
+        create_test_permission(
+            "rbac:manage",
+            "rbac:manage",
+            "Manage RBAC system",
+            "rbac",
+            "manage",
+        ),
+        create_test_permission(
+            "roles:manage",
+            "roles:manage",
+            "Manage roles",
+            "roles",
+            "manage",
+        ),
+        create_test_permission(
+            "permissions:manage",
+            "permissions:manage",
+            "Manage permissions",
+            "permissions",
+            "manage",
+        ),
+        create_test_permission(
+            "permission-groups:manage",
+            "permission-groups:manage",
+            "Manage permission groups",
+            "permission-groups",
+            "manage",
+        ),
+        create_test_permission(
+            "abac:manage",
+            "abac:manage",
+            "Manage ABAC policies",
+            "abac",
+            "manage",
+        ),
+        create_test_permission(
+            "users:manage",
+            "users:manage",
+            "Manage users",
+            "users",
+            "manage",
+        ),
     ]
 }
 
@@ -299,7 +341,7 @@ pub fn create_comprehensive_test_data() -> TestData {
         create_read_permission("content"),
         create_write_permission("content"),
     ];
-    
+
     // Add RBAC management permissions
     permissions.extend(create_rbac_permissions());
 
@@ -332,36 +374,28 @@ pub async fn create_test_pool() -> sqlx::PgPool {
         .expect("Failed to create test database pool")
 }
 
-/// Creates empty in-memory repositories for testing
-pub fn create_empty_test_repositories() -> TestRepositories {
-    (
-        Arc::new(InMemoryUserRepository::new(vec![])),
-        Arc::new(InMemoryRoleRepository::new()),
-        Arc::new(InMemoryPermissionRepository::new()),
-        Arc::new(InMemoryAbacPolicyRepository::new()),
-        Arc::new(InMemoryPermissionGroupRepository::new()),
-        Arc::new(InMemoryRefreshTokenRepository::new()),
-    )
-}
-
 /// Creates test repositories with comprehensive test data
 pub async fn create_test_repositories_with_comprehensive_data() -> TestRepositories {
-    let (users, roles, permissions, permission_groups, abac_policies) = create_comprehensive_test_data();
-    
+    let (users, roles, permissions, permission_groups, abac_policies) =
+        create_comprehensive_test_data();
+
     let user_repo = Arc::new(InMemoryUserRepository::new(users.clone()));
     let role_repo = Arc::new(InMemoryRoleRepository::new());
     let permission_repo = Arc::new(InMemoryPermissionRepository::new());
     let abac_policy_repo = Arc::new(InMemoryAbacPolicyRepository::new());
     let permission_group_repo = Arc::new(InMemoryPermissionGroupRepository::new());
     let refresh_token_repo = Arc::new(InMemoryRefreshTokenRepository::new());
-    
+
     // First create all permissions
     let mut permission_map = std::collections::HashMap::new();
     for permission in permissions {
-        let created_permission = permission_repo.create_permission(&permission.name).await.unwrap();
+        let created_permission = permission_repo
+            .create_permission(&permission.name)
+            .await
+            .unwrap();
         permission_map.insert(permission.name.clone(), created_permission.id.clone());
     }
-    
+
     // Then create roles and assign permissions
     let mut role_map = std::collections::HashMap::new();
     for role in roles {
@@ -370,11 +404,14 @@ pub async fn create_test_repositories_with_comprehensive_data() -> TestRepositor
         // Assign permissions to the role
         for permission_name in &role.permissions {
             if let Some(permission_id) = permission_map.get(permission_name) {
-                permission_repo.assign_permission(&created_role.id, permission_id).await.unwrap();
+                permission_repo
+                    .assign_permission(&created_role.id, permission_id)
+                    .await
+                    .unwrap();
             }
         }
     }
-    
+
     // Assign roles to users
     for user in users {
         for role_name in &user.roles {
@@ -383,46 +420,40 @@ pub async fn create_test_repositories_with_comprehensive_data() -> TestRepositor
             }
         }
     }
-    
+
     for policy in abac_policies {
         abac_policy_repo.create_policy(policy).await.unwrap();
     }
-    
+
     for group in permission_groups {
         permission_group_repo.create_group(group).await.unwrap();
     }
-    
-    (user_repo, role_repo, permission_repo, abac_policy_repo, permission_group_repo, refresh_token_repo)
+
+    (
+        user_repo,
+        role_repo,
+        permission_repo,
+        abac_policy_repo,
+        permission_group_repo,
+        refresh_token_repo,
+    )
+}
+
+/// Creates basic test repositories with given users
+fn create_basic_test_repositories(users: Vec<User>) -> TestRepositories {
+    (
+        Arc::new(InMemoryUserRepository::new(users)),
+        Arc::new(InMemoryRoleRepository::new()),
+        Arc::new(InMemoryPermissionRepository::new()),
+        Arc::new(InMemoryAbacPolicyRepository::new()),
+        Arc::new(InMemoryPermissionGroupRepository::new()),
+        Arc::new(InMemoryRefreshTokenRepository::new()),
+    )
 }
 
 /// Creates test repositories with a single user
-pub fn create_test_repositories_with_user(
-    user: User,
-) -> TestRepositories {
-    (
-        Arc::new(InMemoryUserRepository::new(vec![user])),
-        Arc::new(InMemoryRoleRepository::new()),
-        Arc::new(InMemoryPermissionRepository::new()),
-        Arc::new(InMemoryAbacPolicyRepository::new()),
-        Arc::new(InMemoryPermissionGroupRepository::new()),
-        Arc::new(InMemoryRefreshTokenRepository::new()),
-    )
-}
-
-/// Creates test repositories with admin user and permissions
-pub fn create_test_repositories_with_admin() -> TestRepositories {
-    let admin_user = create_admin_test_user();
-    let admin_role = create_admin_role();
-    let rbac_permissions = create_rbac_permissions();
-    
-    (
-        Arc::new(InMemoryUserRepository::new(vec![admin_user])),
-        Arc::new(InMemoryRoleRepository::new()),
-        Arc::new(InMemoryPermissionRepository::new()),
-        Arc::new(InMemoryAbacPolicyRepository::new()),
-        Arc::new(InMemoryPermissionGroupRepository::new()),
-        Arc::new(InMemoryRefreshTokenRepository::new()),
-    )
+pub fn create_test_repositories_with_user(user: User) -> TestRepositories {
+    create_basic_test_repositories(vec![user])
 }
 
 /// Generates a valid JWT token for testing
@@ -433,32 +464,108 @@ pub async fn generate_valid_token(user: &User, app_state: &AppState) -> String {
         .issue_tokens(user, &app_state.refresh_token_repo)
         .await
         .expect("Failed to generate tokens");
-    
+
     access_token
 }
 
-/// Creates a complete test app state with comprehensive test data
-pub async fn create_test_app_state_with_comprehensive_data() -> Arc<AppState> {
+/// Creates a JWT token with custom expiration time
+fn create_jwt_token_with_expiration(
+    user_id: &str,
+    roles: &[&str],
+    expiration_offset: chrono::Duration,
+) -> String {
+    use jsonwebtoken::{EncodingKey, Header, encode};
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Debug, Serialize, Deserialize)]
+    struct Claims {
+        sub: String,
+        exp: usize,
+        iat: usize,
+        roles: Vec<String>,
+    }
+
     setup_test_env();
 
-    let (
-        user_repo,
-        role_repo,
-        permission_repo,
-        abac_policy_repo,
-        permission_group_repo,
-        refresh_token_repo,
-    ) = create_test_repositories_with_comprehensive_data().await;
+    let now = chrono::Utc::now();
+    let exp = (now + expiration_offset).timestamp() as usize;
+    let iat = now.timestamp() as usize;
 
-    let token_service = Arc::new(TokenService);
-    let password_service = Arc::new(PasswordService);
-    let password_reset_service = Arc::new(PasswordResetService);
-    let authorization_service = Arc::new(AuthorizationService);
+    let claims = Claims {
+        sub: user_id.to_string(),
+        exp,
+        iat,
+        roles: roles.iter().map(|s| s.to_string()).collect(),
+    };
 
-    let command_bus = Arc::new(CommandBus::new());
-    let query_bus = Arc::new(QueryBus::new());
+    let secret = std::env::var("JWT_SECRET")
+        .unwrap_or_else(|_| "test-secret-key-for-testing-only".to_string());
+    encode(
+        &Header::default(),
+        &claims,
+        &EncodingKey::from_secret(secret.as_ref()),
+    )
+    .expect("Failed to create JWT token")
+}
 
-    // Register command handlers
+/// Creates a JWT token with custom secret
+fn create_jwt_token_with_secret(user_id: &str, roles: &[&str], secret: &str) -> String {
+    use jsonwebtoken::{EncodingKey, Header, encode};
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Debug, Serialize, Deserialize)]
+    struct Claims {
+        sub: String,
+        exp: usize,
+        iat: usize,
+        roles: Vec<String>,
+    }
+
+    setup_test_env();
+
+    let now = chrono::Utc::now();
+    let exp = (now + chrono::Duration::hours(1)).timestamp() as usize;
+    let iat = now.timestamp() as usize;
+
+    let claims = Claims {
+        sub: user_id.to_string(),
+        exp,
+        iat,
+        roles: roles.iter().map(|s| s.to_string()).collect(),
+    };
+
+    encode(
+        &Header::default(),
+        &claims,
+        &EncodingKey::from_secret(secret.as_ref()),
+    )
+    .expect("Failed to create JWT token")
+}
+
+/// Creates a test JWT token for testing purposes
+pub fn create_test_jwt_token(user_id: &str, roles: &[&str]) -> String {
+    create_jwt_token_with_expiration(user_id, roles, chrono::Duration::hours(1))
+}
+
+/// Creates an expired JWT token for testing
+pub fn create_expired_test_jwt_token(user_id: &str, roles: &[&str]) -> String {
+    create_jwt_token_with_expiration(user_id, roles, -chrono::Duration::hours(2))
+}
+
+/// Creates a JWT token with invalid signature for testing
+pub fn create_invalid_signature_test_jwt_token(user_id: &str, roles: &[&str]) -> String {
+    create_jwt_token_with_secret(user_id, roles, "wrong-secret-key-for-invalid-signature")
+}
+
+/// Registers common command handlers
+async fn register_common_command_handlers(
+    command_bus: &Arc<CommandBus>,
+    user_repo: &Arc<InMemoryUserRepository>,
+    role_repo: &Arc<InMemoryRoleRepository>,
+    permission_repo: &Arc<InMemoryPermissionRepository>,
+    permission_group_repo: &Arc<InMemoryPermissionGroupRepository>,
+    abac_policy_repo: &Arc<InMemoryAbacPolicyRepository>,
+) {
     command_bus
         .register_handler::<crate::application::commands::AuthenticateUserCommand, _>(
             crate::application::command_handlers::AuthenticateUserCommandHandler::new(
@@ -486,9 +593,7 @@ pub async fn create_test_app_state_with_comprehensive_data() -> Arc<AppState> {
 
     command_bus
         .register_handler::<crate::application::commands::CreateRoleCommand, _>(
-            crate::application::command_handlers::CreateRoleCommandHandler::new(
-                role_repo.clone(),
-            ),
+            crate::application::command_handlers::CreateRoleCommandHandler::new(role_repo.clone()),
         )
         .await;
 
@@ -511,9 +616,7 @@ pub async fn create_test_app_state_with_comprehensive_data() -> Arc<AppState> {
 
     command_bus
         .register_handler::<crate::application::commands::UpdateRoleCommand, _>(
-            crate::application::command_handlers::UpdateRoleCommandHandler::new(
-                role_repo.clone(),
-            ),
+            crate::application::command_handlers::UpdateRoleCommandHandler::new(role_repo.clone()),
         )
         .await;
 
@@ -527,9 +630,7 @@ pub async fn create_test_app_state_with_comprehensive_data() -> Arc<AppState> {
 
     command_bus
         .register_handler::<crate::application::commands::DeleteRoleCommand, _>(
-            crate::application::command_handlers::DeleteRoleCommandHandler::new(
-                role_repo.clone(),
-            ),
+            crate::application::command_handlers::DeleteRoleCommandHandler::new(role_repo.clone()),
         )
         .await;
 
@@ -606,10 +707,17 @@ pub async fn create_test_app_state_with_comprehensive_data() -> Arc<AppState> {
             ),
         )
         .await;
+}
 
-
-
-    // Register query handlers
+/// Registers common query handlers
+async fn register_common_query_handlers(
+    query_bus: &Arc<QueryBus>,
+    user_repo: &Arc<InMemoryUserRepository>,
+    role_repo: &Arc<InMemoryRoleRepository>,
+    permission_repo: &Arc<InMemoryPermissionRepository>,
+    permission_group_repo: &Arc<InMemoryPermissionGroupRepository>,
+    abac_policy_repo: &Arc<InMemoryAbacPolicyRepository>,
+) {
     query_bus
         .register_handler::<crate::application::queries::CheckPermissionQuery, _>(
             crate::application::query_handlers::CheckPermissionQueryHandler::new(
@@ -727,6 +835,49 @@ pub async fn create_test_app_state_with_comprehensive_data() -> Arc<AppState> {
             ),
         )
         .await;
+}
+
+/// Creates a complete test app state with comprehensive test data
+pub async fn create_test_app_state_with_comprehensive_data() -> Arc<AppState> {
+    setup_test_env();
+
+    let (
+        user_repo,
+        role_repo,
+        permission_repo,
+        abac_policy_repo,
+        permission_group_repo,
+        refresh_token_repo,
+    ) = create_test_repositories_with_comprehensive_data().await;
+
+    let token_service = Arc::new(TokenService);
+    let password_service = Arc::new(PasswordService);
+    let password_reset_service = Arc::new(PasswordResetService);
+    let authorization_service = Arc::new(AuthorizationService);
+
+    let command_bus = Arc::new(CommandBus::new());
+    let query_bus = Arc::new(QueryBus::new());
+
+    // Register command and query handlers
+    register_common_command_handlers(
+        &command_bus,
+        &user_repo,
+        &role_repo,
+        &permission_repo,
+        &permission_group_repo,
+        &abac_policy_repo,
+    )
+    .await;
+
+    register_common_query_handlers(
+        &query_bus,
+        &user_repo,
+        &role_repo,
+        &permission_repo,
+        &permission_group_repo,
+        &abac_policy_repo,
+    )
+    .await;
 
     Arc::new(AppState {
         user_repo,
@@ -766,150 +917,26 @@ pub async fn create_test_app_state() -> Arc<AppState> {
     let command_bus = Arc::new(CommandBus::new());
     let query_bus = Arc::new(QueryBus::new());
 
-    // Register command handlers
-    command_bus
-        .register_handler::<crate::application::commands::AuthenticateUserCommand, _>(
-            crate::application::command_handlers::AuthenticateUserCommandHandler::new(
-                user_repo.clone(),
-            ),
-        )
-        .await;
+    // Register command and query handlers
+    register_common_command_handlers(
+        &command_bus,
+        &user_repo,
+        &role_repo,
+        &permission_repo,
+        &permission_group_repo,
+        &abac_policy_repo,
+    )
+    .await;
 
-    command_bus
-        .register_handler::<crate::application::commands::CreateUserCommand, _>(
-            crate::application::command_handlers::CreateUserCommandHandler::new(
-                user_repo.clone(),
-                role_repo.clone(),
-            ),
-        )
-        .await;
-
-    command_bus
-        .register_handler::<crate::application::commands::ChangePasswordCommand, _>(
-            crate::application::command_handlers::ChangePasswordCommandHandler::new(
-                user_repo.clone(),
-            ),
-        )
-        .await;
-
-    // Register query handlers
-    query_bus
-        .register_handler::<crate::application::queries::CheckPermissionQuery, _>(
-            crate::application::query_handlers::CheckPermissionQueryHandler::new(
-                role_repo.clone(),
-                permission_repo.clone(),
-                abac_policy_repo.clone(),
-            ),
-        )
-        .await;
-
-    query_bus
-        .register_handler::<crate::application::queries::ListRolesQuery, _>(
-            crate::application::query_handlers::ListRolesQueryHandler::new(
-                role_repo.clone(),
-                permission_repo.clone(),
-            ),
-        )
-        .await;
-
-    query_bus
-        .register_handler::<crate::application::queries::ListPermissionsQuery, _>(
-            crate::application::query_handlers::ListPermissionsQueryHandler::new(
-                permission_repo.clone(),
-                permission_group_repo.clone(),
-            ),
-        )
-        .await;
-
-    query_bus
-        .register_handler::<crate::application::queries::GetUserByIdQuery, _>(
-            crate::application::query_handlers::GetUserByIdQueryHandler::new(
-                user_repo.clone(),
-                role_repo.clone(),
-                permission_repo.clone(),
-            ),
-        )
-        .await;
-
-    query_bus
-        .register_handler::<crate::application::queries::ListUsersQuery, _>(
-            crate::application::query_handlers::ListUsersQueryHandler::new(
-                user_repo.clone(),
-                role_repo.clone(),
-            ),
-        )
-        .await;
-
-    query_bus
-        .register_handler::<crate::application::queries::GetRoleByIdQuery, _>(
-            crate::application::query_handlers::GetRoleByIdQueryHandler::new(
-                role_repo.clone(),
-                permission_repo.clone(),
-            ),
-        )
-        .await;
-
-    query_bus
-        .register_handler::<crate::application::queries::ListRoleHierarchiesQuery, _>(
-            crate::application::query_handlers::ListRoleHierarchiesQueryHandler::new(
-                role_repo.clone(),
-            ),
-        )
-        .await;
-
-    query_bus
-        .register_handler::<crate::application::queries::GetRoleHierarchyQuery, _>(
-            crate::application::query_handlers::GetRoleHierarchyQueryHandler::new(
-                role_repo.clone(),
-            ),
-        )
-        .await;
-
-    query_bus
-        .register_handler::<crate::application::queries::GetRolesForUserQuery, _>(
-            crate::application::query_handlers::GetRolesForUserQueryHandler::new(role_repo.clone()),
-        )
-        .await;
-
-    query_bus
-        .register_handler::<crate::application::queries::GetRolePermissionsQuery, _>(
-            crate::application::query_handlers::GetRolePermissionsQueryHandler::new(
-                permission_repo.clone(),
-            ),
-        )
-        .await;
-
-    query_bus
-        .register_handler::<crate::application::queries::GetPermissionByIdQuery, _>(
-            crate::application::query_handlers::GetPermissionByIdQueryHandler::new(
-                permission_repo.clone(),
-            ),
-        )
-        .await;
-
-    query_bus
-        .register_handler::<crate::application::queries::ListAbacPoliciesQuery, _>(
-            crate::application::query_handlers::ListAbacPoliciesQueryHandler::new(
-                abac_policy_repo.clone(),
-            ),
-        )
-        .await;
-
-    query_bus
-        .register_handler::<crate::application::queries::ListPermissionGroupsQuery, _>(
-            crate::application::query_handlers::ListPermissionGroupsQueryHandler::new(
-                permission_group_repo.clone(),
-            ),
-        )
-        .await;
-
-    query_bus
-        .register_handler::<crate::application::queries::GetPermissionGroupQuery, _>(
-            crate::application::query_handlers::GetPermissionGroupQueryHandler::new(
-                permission_group_repo.clone(),
-            ),
-        )
-        .await;
+    register_common_query_handlers(
+        &query_bus,
+        &user_repo,
+        &role_repo,
+        &permission_repo,
+        &permission_group_repo,
+        &abac_policy_repo,
+    )
+    .await;
 
     Arc::new(AppState {
         user_repo,

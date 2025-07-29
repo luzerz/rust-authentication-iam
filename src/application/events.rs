@@ -1025,7 +1025,10 @@ mod tests {
 
     #[test]
     fn test_user_password_changed_event() {
-        let event = EventFactory::user_password_changed("user1".to_string(), "test@example.com".to_string());
+        let event = EventFactory::user_password_changed(
+            "user1".to_string(),
+            "test@example.com".to_string(),
+        );
 
         assert_eq!(event.event_type(), "UserPasswordChanged");
         assert_eq!(event.user_id, "user1");
@@ -1053,7 +1056,8 @@ mod tests {
 
     #[test]
     fn test_permission_assigned_to_role_event() {
-        let event = EventFactory::permission_assigned_to_role("role1".to_string(), "perm1".to_string());
+        let event =
+            EventFactory::permission_assigned_to_role("role1".to_string(), "perm1".to_string());
 
         assert_eq!(event.event_type(), "PermissionAssignedToRole");
         assert_eq!(event.role_id, "role1");
@@ -1080,7 +1084,10 @@ mod tests {
     #[test]
     fn test_permissions_removed_from_role_event() {
         let permission_ids = vec!["perm1".to_string(), "perm2".to_string()];
-        let event = EventFactory::permissions_removed_from_role("role1".to_string(), permission_ids.clone());
+        let event = EventFactory::permissions_removed_from_role(
+            "role1".to_string(),
+            permission_ids.clone(),
+        );
 
         assert_eq!(event.event_type(), "PermissionsRemovedFromRole");
         assert_eq!(event.role_id, "role1");
@@ -1107,7 +1114,10 @@ mod tests {
 
     #[test]
     fn test_abac_policy_created_event() {
-        let event = EventFactory::abac_policy_created("policy1".to_string(), "Time-based Access".to_string());
+        let event = EventFactory::abac_policy_created(
+            "policy1".to_string(),
+            "Time-based Access".to_string(),
+        );
 
         assert_eq!(event.event_type(), "AbacPolicyCreated");
         assert_eq!(event.policy_id, "policy1");
@@ -1116,7 +1126,8 @@ mod tests {
 
     #[test]
     fn test_abac_policy_updated_event() {
-        let event = EventFactory::abac_policy_updated("policy1".to_string(), "Updated Policy".to_string());
+        let event =
+            EventFactory::abac_policy_updated("policy1".to_string(), "Updated Policy".to_string());
 
         assert_eq!(event.event_type(), "AbacPolicyUpdated");
         assert_eq!(event.policy_id, "policy1");
@@ -1133,7 +1144,8 @@ mod tests {
 
     #[test]
     fn test_abac_policy_assigned_to_user_event() {
-        let event = EventFactory::abac_policy_assigned_to_user("policy1".to_string(), "user1".to_string());
+        let event =
+            EventFactory::abac_policy_assigned_to_user("policy1".to_string(), "user1".to_string());
 
         assert_eq!(event.event_type(), "AbacPolicyAssignedToUser");
         assert_eq!(event.policy_id, "policy1");
@@ -1142,7 +1154,10 @@ mod tests {
 
     #[test]
     fn test_permission_group_created_event() {
-        let event = EventFactory::permission_group_created("group1".to_string(), "User Management".to_string());
+        let event = EventFactory::permission_group_created(
+            "group1".to_string(),
+            "User Management".to_string(),
+        );
 
         assert_eq!(event.event_type(), "PermissionGroupCreated");
         assert_eq!(event.group_id, "group1");
@@ -1151,7 +1166,10 @@ mod tests {
 
     #[test]
     fn test_permission_group_updated_event() {
-        let event = EventFactory::permission_group_updated("group1".to_string(), "Updated Group".to_string());
+        let event = EventFactory::permission_group_updated(
+            "group1".to_string(),
+            "Updated Group".to_string(),
+        );
 
         assert_eq!(event.event_type(), "PermissionGroupUpdated");
         assert_eq!(event.group_id, "group1");
@@ -1169,7 +1187,8 @@ mod tests {
     #[test]
     fn test_permissions_assigned_to_role_event() {
         let permission_ids = vec!["perm1".to_string(), "perm2".to_string()];
-        let event = EventFactory::permissions_assigned_to_role("role1".to_string(), permission_ids.clone());
+        let event =
+            EventFactory::permissions_assigned_to_role("role1".to_string(), permission_ids.clone());
 
         assert_eq!(event.event_type(), "PermissionsAssignedToRole");
         assert_eq!(event.role_id, "role1");
@@ -1178,7 +1197,8 @@ mod tests {
 
     #[test]
     fn test_user_profile_updated_event() {
-        let event = EventFactory::user_profile_updated("user1".to_string(), "new@example.com".to_string());
+        let event =
+            EventFactory::user_profile_updated("user1".to_string(), "new@example.com".to_string());
 
         assert_eq!(event.event_type(), "UserProfileUpdated");
         assert_eq!(event.user_id, "user1");
@@ -1201,7 +1221,8 @@ mod tests {
 
     #[test]
     fn test_token_refreshed_event() {
-        let event = EventFactory::token_refreshed("user1".to_string(), "test@example.com".to_string());
+        let event =
+            EventFactory::token_refreshed("user1".to_string(), "test@example.com".to_string());
 
         assert_eq!(event.event_type(), "TokenRefreshed");
         assert_eq!(event.user_id, "user1");
@@ -1218,7 +1239,8 @@ mod tests {
 
     #[test]
     fn test_permission_checked_event() {
-        let event = EventFactory::permission_checked("user1".to_string(), "read_users".to_string(), true);
+        let event =
+            EventFactory::permission_checked("user1".to_string(), "read_users".to_string(), true);
 
         assert_eq!(event.event_type(), "PermissionChecked");
         assert_eq!(event.user_id, "user1");
@@ -1230,32 +1252,100 @@ mod tests {
     fn test_domain_event_trait_implementations() {
         // Test that all events implement DomainEvent trait correctly
         let events: Vec<Box<dyn DomainEvent>> = vec![
-            Box::new(EventFactory::user_created("user1".to_string(), "test@example.com".to_string())),
-            Box::new(EventFactory::user_logged_in("user1".to_string(), "test@example.com".to_string(), None)),
-            Box::new(EventFactory::user_login_failed("test@example.com".to_string(), "Invalid password".to_string(), None)),
-            Box::new(EventFactory::user_account_locked("user1".to_string(), "test@example.com".to_string(), "Locked".to_string())),
-            Box::new(EventFactory::user_password_changed("user1".to_string(), "test@example.com".to_string())),
-            Box::new(EventFactory::user_roles_assigned("user1".to_string(), vec!["role1".to_string()])),
-            Box::new(EventFactory::role_created("role1".to_string(), "Admin".to_string())),
-            Box::new(EventFactory::permission_assigned_to_role("role1".to_string(), "perm1".to_string())),
-            Box::new(EventFactory::permission_created("perm1".to_string(), "read_users".to_string())),
+            Box::new(EventFactory::user_created(
+                "user1".to_string(),
+                "test@example.com".to_string(),
+            )),
+            Box::new(EventFactory::user_logged_in(
+                "user1".to_string(),
+                "test@example.com".to_string(),
+                None,
+            )),
+            Box::new(EventFactory::user_login_failed(
+                "test@example.com".to_string(),
+                "Invalid password".to_string(),
+                None,
+            )),
+            Box::new(EventFactory::user_account_locked(
+                "user1".to_string(),
+                "test@example.com".to_string(),
+                "Locked".to_string(),
+            )),
+            Box::new(EventFactory::user_password_changed(
+                "user1".to_string(),
+                "test@example.com".to_string(),
+            )),
+            Box::new(EventFactory::user_roles_assigned(
+                "user1".to_string(),
+                vec!["role1".to_string()],
+            )),
+            Box::new(EventFactory::role_created(
+                "role1".to_string(),
+                "Admin".to_string(),
+            )),
+            Box::new(EventFactory::permission_assigned_to_role(
+                "role1".to_string(),
+                "perm1".to_string(),
+            )),
+            Box::new(EventFactory::permission_created(
+                "perm1".to_string(),
+                "read_users".to_string(),
+            )),
             Box::new(EventFactory::permission_deleted("perm1".to_string())),
-            Box::new(EventFactory::permissions_removed_from_role("role1".to_string(), vec!["perm1".to_string()])),
-            Box::new(EventFactory::roles_removed_from_user("user1".to_string(), vec!["role1".to_string()])),
+            Box::new(EventFactory::permissions_removed_from_role(
+                "role1".to_string(),
+                vec!["perm1".to_string()],
+            )),
+            Box::new(EventFactory::roles_removed_from_user(
+                "user1".to_string(),
+                vec!["role1".to_string()],
+            )),
             Box::new(EventFactory::role_deleted("role1".to_string())),
-            Box::new(EventFactory::abac_policy_created("policy1".to_string(), "Policy".to_string())),
-            Box::new(EventFactory::abac_policy_updated("policy1".to_string(), "Updated Policy".to_string())),
+            Box::new(EventFactory::abac_policy_created(
+                "policy1".to_string(),
+                "Policy".to_string(),
+            )),
+            Box::new(EventFactory::abac_policy_updated(
+                "policy1".to_string(),
+                "Updated Policy".to_string(),
+            )),
             Box::new(EventFactory::abac_policy_deleted("policy1".to_string())),
-            Box::new(EventFactory::abac_policy_assigned_to_user("policy1".to_string(), "user1".to_string())),
-            Box::new(EventFactory::permission_group_created("group1".to_string(), "Group".to_string())),
-            Box::new(EventFactory::permission_group_updated("group1".to_string(), "Updated Group".to_string())),
+            Box::new(EventFactory::abac_policy_assigned_to_user(
+                "policy1".to_string(),
+                "user1".to_string(),
+            )),
+            Box::new(EventFactory::permission_group_created(
+                "group1".to_string(),
+                "Group".to_string(),
+            )),
+            Box::new(EventFactory::permission_group_updated(
+                "group1".to_string(),
+                "Updated Group".to_string(),
+            )),
             Box::new(EventFactory::permission_group_deleted("group1".to_string())),
-            Box::new(EventFactory::permissions_assigned_to_role("role1".to_string(), vec!["perm1".to_string()])),
-            Box::new(EventFactory::user_profile_updated("user1".to_string(), "test@example.com".to_string())),
-            Box::new(EventFactory::user_lock_toggled("user1".to_string(), true, None)),
-            Box::new(EventFactory::token_refreshed("user1".to_string(), "test@example.com".to_string())),
+            Box::new(EventFactory::permissions_assigned_to_role(
+                "role1".to_string(),
+                vec!["perm1".to_string()],
+            )),
+            Box::new(EventFactory::user_profile_updated(
+                "user1".to_string(),
+                "test@example.com".to_string(),
+            )),
+            Box::new(EventFactory::user_lock_toggled(
+                "user1".to_string(),
+                true,
+                None,
+            )),
+            Box::new(EventFactory::token_refreshed(
+                "user1".to_string(),
+                "test@example.com".to_string(),
+            )),
             Box::new(EventFactory::user_logged_out("user1".to_string())),
-            Box::new(EventFactory::permission_checked("user1".to_string(), "read_users".to_string(), true)),
+            Box::new(EventFactory::permission_checked(
+                "user1".to_string(),
+                "read_users".to_string(),
+                true,
+            )),
         ];
 
         for event in events {

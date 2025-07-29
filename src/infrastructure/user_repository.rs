@@ -419,7 +419,9 @@ mod tests {
     async fn test_in_memory_user_repository_update_password_not_found() {
         let repo = InMemoryUserRepository::new(vec![]);
 
-        let result = repo.update_password("nonexistent-user", "new_hashed_password").await;
+        let result = repo
+            .update_password("nonexistent-user", "new_hashed_password")
+            .await;
         assert!(result.is_ok()); // In-memory repo doesn't error on non-existent user
     }
 

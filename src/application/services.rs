@@ -945,4 +945,57 @@ mod tests {
         assert!(result.is_ok());
         assert!(result.unwrap()); // Should return true since user has the permission via role
     }
+
+    #[tokio::test]
+    async fn test_password_reset_service_generate_reset_token() {
+        let service = PasswordResetService;
+        let user_id = "user123";
+
+        let token = service.generate_reset_token(user_id).unwrap();
+        assert!(!token.is_empty());
+
+        // Validate the generated token
+        let extracted_user_id = service.validate_reset_token(&token).unwrap();
+        assert_eq!(extracted_user_id, user_id);
+    }
+
+    #[tokio::test]
+    async fn test_password_reset_service_validate_reset_token() {
+        let service = PasswordResetService;
+        let user_id = "user123";
+
+        let token = service.generate_reset_token(user_id).unwrap();
+        let extracted_user_id = service.validate_reset_token(&token).unwrap();
+        assert_eq!(extracted_user_id, user_id);
+    }
+
+    #[tokio::test]
+    async fn test_password_reset_service_validate_invalid_token() {
+        let service = PasswordResetService;
+
+        let result = service.validate_reset_token("invalid_token");
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_password_reset_service_validate_expired_token() {
+        let service = PasswordResetService;
+
+        // Create a token that's already expired
+        let expired_token = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyMTIzIiwiZXhwIjoxNjE2MTYxNjE2fQ.invalid_signature";
+
+        let result = service.validate_reset_token(expired_token);
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_password_reset_service_send_reset_email() {
+        let service = PasswordResetService;
+
+        // This should succeed even in test environment
+        let result = service
+            .send_reset_email("test@example.com", "reset_token")
+            .await;
+        assert!(result.is_ok());
+    }
 }

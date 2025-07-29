@@ -142,14 +142,12 @@ mod tests {
     use super::*;
     use crate::infrastructure::InMemoryPermissionRepository;
 
-
-
     #[tokio::test]
     async fn test_in_memory_permission_repository_create_permission() {
         let repo = InMemoryPermissionRepository::new();
-        
+
         let permission = repo.create_permission("test_permission").await.unwrap();
-        
+
         assert_eq!(permission.name, "test_permission");
         assert!(permission.is_active);
         assert!(permission.description.is_none());
@@ -159,10 +157,10 @@ mod tests {
     #[tokio::test]
     async fn test_in_memory_permission_repository_get_permission() {
         let repo = InMemoryPermissionRepository::new();
-        
+
         let created = repo.create_permission("test_permission").await.unwrap();
         let retrieved = repo.get_permission(&created.id).await.unwrap();
-        
+
         assert!(retrieved.is_some());
         let retrieved = retrieved.unwrap();
         assert_eq!(retrieved.id, created.id);
@@ -172,7 +170,7 @@ mod tests {
     #[tokio::test]
     async fn test_in_memory_permission_repository_get_permission_not_found() {
         let repo = InMemoryPermissionRepository::new();
-        
+
         let result = repo.get_permission("non_existent_id").await.unwrap();
         assert!(result.is_none());
     }
@@ -180,14 +178,14 @@ mod tests {
     #[tokio::test]
     async fn test_in_memory_permission_repository_list_permissions() {
         let repo = InMemoryPermissionRepository::new();
-        
+
         repo.create_permission("permission1").await.unwrap();
         repo.create_permission("permission2").await.unwrap();
         repo.create_permission("permission3").await.unwrap();
-        
+
         let permissions = repo.list_permissions().await.unwrap();
         assert_eq!(permissions.len(), 3);
-        
+
         let names: Vec<&str> = permissions.iter().map(|p| p.name.as_str()).collect();
         assert!(names.contains(&"permission1"));
         assert!(names.contains(&"permission2"));
@@ -197,16 +195,16 @@ mod tests {
     #[tokio::test]
     async fn test_in_memory_permission_repository_delete_permission() {
         let repo = InMemoryPermissionRepository::new();
-        
+
         let permission = repo.create_permission("test_permission").await.unwrap();
-        
+
         // Verify it exists
         let retrieved = repo.get_permission(&permission.id).await.unwrap();
         assert!(retrieved.is_some());
-        
+
         // Delete it
         repo.delete_permission(&permission.id).await.unwrap();
-        
+
         // Verify it's gone
         let retrieved = repo.get_permission(&permission.id).await.unwrap();
         assert!(retrieved.is_none());
@@ -215,43 +213,57 @@ mod tests {
     #[tokio::test]
     async fn test_in_memory_permission_repository_assign_and_remove_permission() {
         let repo = InMemoryPermissionRepository::new();
-        
+
         let permission = repo.create_permission("test_permission").await.unwrap();
         let role_id = "test_role_id";
-        
+
         // Assign permission to role
-        repo.assign_permission(role_id, &permission.id).await.unwrap();
-        
+        repo.assign_permission(role_id, &permission.id)
+            .await
+            .unwrap();
+
         // Verify role has permission
-        let has_permission = repo.role_has_permission(role_id, &permission.id).await.unwrap();
+        let has_permission = repo
+            .role_has_permission(role_id, &permission.id)
+            .await
+            .unwrap();
         assert!(has_permission);
-        
+
         // Remove permission from role
-        repo.remove_permission(role_id, &permission.id).await.unwrap();
-        
+        repo.remove_permission(role_id, &permission.id)
+            .await
+            .unwrap();
+
         // Verify role no longer has permission
-        let has_permission = repo.role_has_permission(role_id, &permission.id).await.unwrap();
+        let has_permission = repo
+            .role_has_permission(role_id, &permission.id)
+            .await
+            .unwrap();
         assert!(!has_permission);
     }
 
     #[tokio::test]
     async fn test_in_memory_permission_repository_get_permissions_for_role() {
         let repo = InMemoryPermissionRepository::new();
-        
+
         let permission1 = repo.create_permission("permission1").await.unwrap();
         let permission2 = repo.create_permission("permission2").await.unwrap();
         let permission3 = repo.create_permission("permission3").await.unwrap();
-        
+
         let role_id = "test_role_id";
-        
+
         // Assign permissions to role
-        repo.assign_permission(role_id, &permission1.id).await.unwrap();
-        repo.assign_permission(role_id, &permission2.id).await.unwrap();
-        
+        repo.assign_permission(role_id, &permission1.id)
+            .await
+            .unwrap();
+        repo.assign_permission(role_id, &permission2.id)
+            .await
+            .unwrap();
+
         // Get permissions for role
         let permissions = repo.get_permissions_for_role(role_id).await.unwrap();
         assert_eq!(permissions.len(), 2);
-        
+
         let permission_ids: Vec<&str> = permissions.iter().map(|p| p.id.as_str()).collect();
         assert!(permission_ids.contains(&permission1.id.as_str()));
         assert!(permission_ids.contains(&permission2.id.as_str()));
@@ -261,33 +273,45 @@ mod tests {
     #[tokio::test]
     async fn test_in_memory_permission_repository_role_has_permission() {
         let repo = InMemoryPermissionRepository::new();
-        
+
         let permission = repo.create_permission("test_permission").await.unwrap();
         let role_id = "test_role_id";
-        
+
         // Initially role should not have permission
-        let has_permission = repo.role_has_permission(role_id, &permission.id).await.unwrap();
+        let has_permission = repo
+            .role_has_permission(role_id, &permission.id)
+            .await
+            .unwrap();
         assert!(!has_permission);
-        
+
         // Assign permission
-        repo.assign_permission(role_id, &permission.id).await.unwrap();
-        
+        repo.assign_permission(role_id, &permission.id)
+            .await
+            .unwrap();
+
         // Now role should have permission
-        let has_permission = repo.role_has_permission(role_id, &permission.id).await.unwrap();
+        let has_permission = repo
+            .role_has_permission(role_id, &permission.id)
+            .await
+            .unwrap();
         assert!(has_permission);
     }
 
     #[tokio::test]
     async fn test_in_memory_permission_repository_duplicate_assign_permission() {
         let repo = InMemoryPermissionRepository::new();
-        
+
         let permission = repo.create_permission("test_permission").await.unwrap();
         let role_id = "test_role_id";
-        
+
         // Assign permission twice
-        repo.assign_permission(role_id, &permission.id).await.unwrap();
-        repo.assign_permission(role_id, &permission.id).await.unwrap();
-        
+        repo.assign_permission(role_id, &permission.id)
+            .await
+            .unwrap();
+        repo.assign_permission(role_id, &permission.id)
+            .await
+            .unwrap();
+
         // Should still only have one assignment
         let permissions = repo.get_permissions_for_role(role_id).await.unwrap();
         assert_eq!(permissions.len(), 1);
@@ -296,19 +320,24 @@ mod tests {
     #[tokio::test]
     async fn test_in_memory_permission_repository_remove_nonexistent_permission() {
         let repo = InMemoryPermissionRepository::new();
-        
+
         // Try to remove a permission that doesn't exist
-        repo.remove_permission("test_role_id", "non_existent_permission_id").await.unwrap();
-        
+        repo.remove_permission("test_role_id", "non_existent_permission_id")
+            .await
+            .unwrap();
+
         // Should not cause an error
-        let has_permission = repo.role_has_permission("test_role_id", "non_existent_permission_id").await.unwrap();
+        let has_permission = repo
+            .role_has_permission("test_role_id", "non_existent_permission_id")
+            .await
+            .unwrap();
         assert!(!has_permission);
     }
 
     #[tokio::test]
     async fn test_in_memory_permission_repository_empty_list() {
         let repo = InMemoryPermissionRepository::new();
-        
+
         let permissions = repo.list_permissions().await.unwrap();
         assert_eq!(permissions.len(), 0);
     }
@@ -316,7 +345,7 @@ mod tests {
     #[tokio::test]
     async fn test_in_memory_permission_repository_default_implementation() {
         let repo = InMemoryPermissionRepository::default();
-        
+
         // Should be able to create a permission
         let permission = repo.create_permission("test_permission").await.unwrap();
         assert_eq!(permission.name, "test_permission");
@@ -400,7 +429,10 @@ mod postgres_tests {
         let repo = create_test_repo().await;
 
         // Create a permission first
-        let permission = repo.create_permission("test_permission_delete").await.unwrap();
+        let permission = repo
+            .create_permission("test_permission_delete")
+            .await
+            .unwrap();
 
         // Delete the permission
         let result = repo.delete_permission(&permission.id).await;
@@ -442,7 +474,9 @@ mod postgres_tests {
         let permission = repo.create_permission(&unique_name).await.unwrap();
 
         // Assign permission to a role
-        repo.assign_permission("test-role-2", &permission.id).await.unwrap();
+        repo.assign_permission("test-role-2", &permission.id)
+            .await
+            .unwrap();
 
         // Remove the permission
         let result = repo.remove_permission("test-role-2", &permission.id).await;
@@ -462,15 +496,21 @@ mod postgres_tests {
         let permission = repo.create_permission(&unique_name).await.unwrap();
 
         // Initially, role should not have permission
-        let result = repo.role_has_permission("test-role-3", &permission.id).await;
+        let result = repo
+            .role_has_permission("test-role-3", &permission.id)
+            .await;
         assert!(result.is_ok());
         assert!(!result.unwrap());
 
         // Assign permission to role
-        repo.assign_permission("test-role-3", &permission.id).await.unwrap();
+        repo.assign_permission("test-role-3", &permission.id)
+            .await
+            .unwrap();
 
         // Now role should have permission
-        let result = repo.role_has_permission("test-role-3", &permission.id).await;
+        let result = repo
+            .role_has_permission("test-role-3", &permission.id)
+            .await;
         assert!(result.is_ok());
         assert!(result.unwrap());
     }
@@ -497,8 +537,12 @@ mod postgres_tests {
         let permission2 = repo.create_permission(&unique_name2).await.unwrap();
 
         // Assign permissions to role
-        repo.assign_permission("test-role-4", &permission1.id).await.unwrap();
-        repo.assign_permission("test-role-4", &permission2.id).await.unwrap();
+        repo.assign_permission("test-role-4", &permission1.id)
+            .await
+            .unwrap();
+        repo.assign_permission("test-role-4", &permission2.id)
+            .await
+            .unwrap();
 
         // Get permissions for role
         let result = repo.get_permissions_for_role("test-role-4").await;
@@ -520,7 +564,9 @@ mod postgres_tests {
         let permission = repo.create_permission(&unique_name).await.unwrap();
 
         // Assign permission to role twice
-        repo.assign_permission("test-role-5", &permission.id).await.unwrap();
+        repo.assign_permission("test-role-5", &permission.id)
+            .await
+            .unwrap();
         let result = repo.assign_permission("test-role-5", &permission.id).await;
         assert!(result.is_ok()); // Should not error due to ON CONFLICT DO NOTHING
     }
@@ -534,7 +580,9 @@ mod postgres_tests {
         create_test_role(&pool, "test-role-6", "Test Role 6").await;
 
         // Try to remove a non-existent permission assignment
-        let result = repo.remove_permission("test-role-6", "nonexistent-permission").await;
+        let result = repo
+            .remove_permission("test-role-6", "nonexistent-permission")
+            .await;
         assert!(result.is_ok()); // Should not error
     }
 
