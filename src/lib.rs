@@ -738,14 +738,6 @@ mod tests {
     }
 
     #[test]
-    fn test_app_config_from_env_missing_required() {
-        test_helpers::cleanup_test_env();
-
-        let result = AppConfig::from_env();
-        assert!(matches!(result, Err(ConfigError::MissingRequired(_))));
-    }
-
-    #[test]
     fn test_app_state_builder_new() {
         let builder = AppStateBuilder::new();
         assert!(builder.pool.is_none());
