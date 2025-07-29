@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{RwLock};
+use tokio::sync::RwLock;
 
 /// Command handler trait
 #[async_trait]
@@ -217,7 +217,7 @@ impl<C> CommandWithContext<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::commands::{CommandFactory, AuthenticateUserCommand};
+    use crate::application::commands::{AuthenticateUserCommand, CommandFactory};
     use crate::application::services::PasswordService;
     use crate::infrastructure::{InMemoryUserRepository, UserRepository};
     use std::sync::Arc;
@@ -233,7 +233,10 @@ mod tests {
         type Result = crate::domain::user::User;
         type Error = crate::application::services::AuthError;
 
-        async fn handle(&self, command: AuthenticateUserCommand) -> Result<Self::Result, Self::Error> {
+        async fn handle(
+            &self,
+            command: AuthenticateUserCommand,
+        ) -> Result<Self::Result, Self::Error> {
             let user = self
                 .user_repo
                 .find_by_email(&command.email)

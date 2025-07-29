@@ -74,11 +74,10 @@ impl User {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use bcrypt::hash;
+    use crate::domain::user::User;
 
     fn create_test_user() -> User {
-        let password_hash = hash("password123", 4).unwrap(); // Use cost 4 for faster tests
+        let password_hash = bcrypt::hash("password", 4).unwrap(); // Use cost 4 for faster tests
         User {
             id: "user1".to_string(),
             email: "test@example.com".to_string(),
@@ -103,7 +102,7 @@ mod tests {
     fn test_password_verification() {
         let user = create_test_user();
 
-        assert!(user.verify_password("password123").unwrap());
+        assert!(user.verify_password("password").unwrap());
         assert!(!user.verify_password("wrongpassword").unwrap());
     }
 

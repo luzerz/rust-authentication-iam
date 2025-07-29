@@ -616,14 +616,7 @@ mod tests {
         InMemoryUserRepository,
     };
 
-    fn setup_test_env() {
-        unsafe {
-            std::env::set_var("JWT_SECRET", "test-secret-key");
-            std::env::set_var("JWT_EXPIRATION", "3600");
-            std::env::set_var("JWT_TIME_UNIT", "hours");
-            std::env::set_var("REFRESH_TOKEN_EXPIRATION", "86400");
-        }
-    }
+    use crate::test_utils::setup_test_env;
 
     #[tokio::test]
     async fn test_auth_service_authenticate_user_success() {
@@ -807,13 +800,13 @@ mod tests {
             "password123".to_string(),
         );
         let token_service = TokenService;
-        
+
         // Set environment variables BEFORE creating the token
         unsafe {
             std::env::set_var("JWT_EXPIRATION", "1");
             std::env::set_var("JWT_TIME_UNIT", "seconds");
         }
-        
+
         // Create a token with very short expiration
         let token = token_service.create_access_token(&user).unwrap();
 
@@ -822,7 +815,10 @@ mod tests {
 
         let result = token_service.validate_token(&token);
         // Check for either TokenExpired or InvalidToken (both are acceptable for expired tokens)
-        assert!(matches!(result, Err(AuthError::TokenExpired) | Err(AuthError::InvalidToken)));
+        assert!(matches!(
+            result,
+            Err(AuthError::TokenExpired) | Err(AuthError::InvalidToken)
+        ));
     }
 
     #[tokio::test]
@@ -871,7 +867,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_authz_service_user_has_permission() {
+    async fn test_auth_service_user_has_permission() {
         setup_test_env();
         let user_repo = Arc::new(InMemoryUserRepository::new(vec![]));
         let role_repo = Arc::new(InMemoryRoleRepository::new());
@@ -903,7 +899,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_authz_service_user_has_permission_with_roles() {
+    async fn test_auth_service_user_has_permission_with_roles() {
         setup_test_env();
         let user_repo = Arc::new(InMemoryUserRepository::new(vec![]));
         let role_repo = Arc::new(InMemoryRoleRepository::new());

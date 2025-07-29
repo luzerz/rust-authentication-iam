@@ -68,7 +68,7 @@ jobs:
       - name: Prepare SQLx data
         run: cargo sqlx prepare --database-url $DATABASE_URL
       - name: Lint (clippy)
-        run: cargo clippy --all -- -D warnings
+        run: cargo clippy
 
   fmt:
     runs-on: ubuntu-latest

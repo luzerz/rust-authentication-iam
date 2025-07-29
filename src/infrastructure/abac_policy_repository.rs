@@ -511,3 +511,277 @@ impl AbacPolicyRepository for PostgresAbacPolicyRepository {
         Ok(policies)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::abac_policy::{AbacCondition, AbacEffect};
+
+    fn create_test_policy(id: &str, name: &str) -> AbacPolicy {
+        AbacPolicy {
+            id: id.to_string(),
+            name: name.to_string(),
+            effect: AbacEffect::Allow,
+            conditions: vec![AbacCondition {
+                attribute: "user.role".to_string(),
+                operator: "equals".to_string(),
+                value: "admin".to_string(),
+            }],
+            priority: Some(50),
+            conflict_resolution: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_abac_policy_repository_create_policy() {
+        let repo = InMemoryAbacPolicyRepository::new();
+        let policy = create_test_policy("test-policy", "Test Policy");
+
+        let result = repo.create_policy(policy.clone()).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().id, "test-policy");
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_abac_policy_repository_get_policy() {
+        let repo = InMemoryAbacPolicyRepository::new();
+        let policy = create_test_policy("test-policy", "Test Policy");
+
+        // Create policy
+        repo.create_policy(policy.clone()).await.unwrap();
+
+        // Get policy
+        let result = repo.get_policy("test-policy").await;
+        assert!(result.is_ok());
+        let retrieved_policy = result.unwrap().unwrap();
+        assert_eq!(retrieved_policy.id, "test-policy");
+        assert_eq!(retrieved_policy.name, "Test Policy");
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_abac_policy_repository_get_policy_not_found() {
+        let repo = InMemoryAbacPolicyRepository::new();
+
+        let result = repo.get_policy("nonexistent-policy").await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_abac_policy_repository_update_policy() {
+        let repo = InMemoryAbacPolicyRepository::new();
+        let policy = create_test_policy("test-policy", "Test Policy");
+
+        // Create policy
+        repo.create_policy(policy.clone()).await.unwrap();
+
+        // Update policy
+        let mut updated_policy = policy.clone();
+        updated_policy.name = "Updated Policy".to_string();
+        updated_policy.effect = AbacEffect::Deny;
+
+        let result = repo.update_policy("test-policy", updated_policy.clone()).await;
+        assert!(result.is_ok());
+        let updated = result.unwrap();
+        assert_eq!(updated.name, "Updated Policy");
+        assert_eq!(updated.effect, AbacEffect::Deny);
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_abac_policy_repository_update_policy_not_found() {
+        let repo = InMemoryAbacPolicyRepository::new();
+        let policy = create_test_policy("test-policy", "Test Policy");
+
+        let result = repo.update_policy("nonexistent-policy", policy).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_abac_policy_repository_list_policies() {
+        let repo = InMemoryAbacPolicyRepository::new();
+        let policy1 = create_test_policy("policy-1", "Policy 1");
+        let policy2 = create_test_policy("policy-2", "Policy 2");
+
+        // Create policies
+        repo.create_policy(policy1.clone()).await.unwrap();
+        repo.create_policy(policy2.clone()).await.unwrap();
+
+        // List policies
+        let result = repo.list_policies().await;
+        assert!(result.is_ok());
+        let policies = result.unwrap();
+        assert_eq!(policies.len(), 2);
+        assert!(policies.iter().any(|p| p.id == "policy-1"));
+        assert!(policies.iter().any(|p| p.id == "policy-2"));
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_abac_policy_repository_list_policies_empty() {
+        let repo = InMemoryAbacPolicyRepository::new();
+
+        let result = repo.list_policies().await;
+        assert!(result.is_ok());
+        let policies = result.unwrap();
+        assert_eq!(policies.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_abac_policy_repository_delete_policy() {
+        let repo = InMemoryAbacPolicyRepository::new();
+        let policy = create_test_policy("test-policy", "Test Policy");
+
+        // Create policy
+        repo.create_policy(policy.clone()).await.unwrap();
+
+        // Verify policy exists
+        let result = repo.get_policy("test-policy").await;
+        assert!(result.unwrap().is_some());
+
+        // Delete policy
+        let result = repo.delete_policy("test-policy").await;
+        assert!(result.is_ok());
+
+        // Verify policy is deleted
+        let result = repo.get_policy("test-policy").await;
+        assert!(result.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_abac_policy_repository_assign_policy_to_user() {
+        let repo = InMemoryAbacPolicyRepository::new();
+        let policy = create_test_policy("test-policy", "Test Policy");
+
+        // Create policy
+        repo.create_policy(policy.clone()).await.unwrap();
+
+        // Assign policy to user
+        let result = repo.assign_policy_to_user("user-1", "test-policy").await;
+        assert!(result.is_ok());
+
+        // Get policies for user
+        let result = repo.get_policies_for_user("user-1").await;
+        assert!(result.is_ok());
+        let policies = result.unwrap();
+        assert_eq!(policies.len(), 1);
+        assert_eq!(policies[0].id, "test-policy");
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_abac_policy_repository_assign_policy_to_user_duplicate() {
+        let repo = InMemoryAbacPolicyRepository::new();
+        let policy = create_test_policy("test-policy", "Test Policy");
+
+        // Create policy
+        repo.create_policy(policy.clone()).await.unwrap();
+
+        // Assign policy to user twice
+        repo.assign_policy_to_user("user-1", "test-policy").await.unwrap();
+        repo.assign_policy_to_user("user-1", "test-policy").await.unwrap();
+
+        // Get policies for user
+        let result = repo.get_policies_for_user("user-1").await;
+        assert!(result.is_ok());
+        let policies = result.unwrap();
+        assert_eq!(policies.len(), 1); // Should not be duplicated
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_abac_policy_repository_assign_policy_to_role() {
+        let repo = InMemoryAbacPolicyRepository::new();
+        let policy = create_test_policy("test-policy", "Test Policy");
+
+        // Create policy
+        repo.create_policy(policy.clone()).await.unwrap();
+
+        // Assign policy to role
+        let result = repo.assign_policy_to_role("role-1", "test-policy").await;
+        assert!(result.is_ok());
+
+        // Get policies for role
+        let result = repo.get_policies_for_role("role-1").await;
+        assert!(result.is_ok());
+        let policies = result.unwrap();
+        assert_eq!(policies.len(), 1);
+        assert_eq!(policies[0].id, "test-policy");
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_abac_policy_repository_get_policies_for_user_empty() {
+        let repo = InMemoryAbacPolicyRepository::new();
+
+        let result = repo.get_policies_for_user("user-1").await;
+        assert!(result.is_ok());
+        let policies = result.unwrap();
+        assert_eq!(policies.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_abac_policy_repository_get_policies_for_role_empty() {
+        let repo = InMemoryAbacPolicyRepository::new();
+
+        let result = repo.get_policies_for_role("role-1").await;
+        assert!(result.is_ok());
+        let policies = result.unwrap();
+        assert_eq!(policies.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_abac_policy_repository_delete_policy_cleans_up_assignments() {
+        let repo = InMemoryAbacPolicyRepository::new();
+        let policy = create_test_policy("test-policy", "Test Policy");
+
+        // Create policy
+        repo.create_policy(policy.clone()).await.unwrap();
+
+        // Assign policy to user and role
+        repo.assign_policy_to_user("user-1", "test-policy").await.unwrap();
+        repo.assign_policy_to_role("role-1", "test-policy").await.unwrap();
+
+        // Verify assignments exist
+        let user_policies = repo.get_policies_for_user("user-1").await.unwrap();
+        assert_eq!(user_policies.len(), 1);
+        let role_policies = repo.get_policies_for_role("role-1").await.unwrap();
+        assert_eq!(role_policies.len(), 1);
+
+        // Delete policy
+        repo.delete_policy("test-policy").await.unwrap();
+
+        // Verify assignments are cleaned up
+        let user_policies = repo.get_policies_for_user("user-1").await.unwrap();
+        assert_eq!(user_policies.len(), 0);
+        let role_policies = repo.get_policies_for_role("role-1").await.unwrap();
+        assert_eq!(role_policies.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_abac_policy_repository_multiple_policies() {
+        let repo = InMemoryAbacPolicyRepository::new();
+        let policy1 = create_test_policy("policy-1", "Policy 1");
+        let policy2 = create_test_policy("policy-2", "Policy 2");
+
+        // Create policies
+        repo.create_policy(policy1.clone()).await.unwrap();
+        repo.create_policy(policy2.clone()).await.unwrap();
+
+        // Assign both policies to user
+        repo.assign_policy_to_user("user-1", "policy-1").await.unwrap();
+        repo.assign_policy_to_user("user-1", "policy-2").await.unwrap();
+
+        // Get policies for user
+        let result = repo.get_policies_for_user("user-1").await;
+        assert!(result.is_ok());
+        let policies = result.unwrap();
+        assert_eq!(policies.len(), 2);
+        assert!(policies.iter().any(|p| p.id == "policy-1"));
+        assert!(policies.iter().any(|p| p.id == "policy-2"));
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_abac_policy_repository_default_implementation() {
+        let repo = InMemoryAbacPolicyRepository::default();
+        
+        // Test that default creates an empty repository
+        let policies = repo.list_policies().await.unwrap();
+        assert_eq!(policies.len(), 0);
+    }
+}

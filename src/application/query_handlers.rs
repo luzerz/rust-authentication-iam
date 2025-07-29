@@ -916,57 +916,40 @@ impl QueryHandler<GetPermissionByIdQuery> for GetPermissionByIdQueryHandler {
 mod tests {
     use super::*;
     use crate::application::queries::QueryFactory;
-    use crate::domain::user::User;
     use crate::infrastructure::{
-        InMemoryAbacPolicyRepository, InMemoryPermissionGroupRepository, InMemoryPermissionRepository,
-        InMemoryRoleRepository, InMemoryUserRepository,
+        InMemoryAbacPolicyRepository, InMemoryPermissionGroupRepository,
+        InMemoryPermissionRepository, InMemoryRoleRepository, InMemoryUserRepository,
     };
 
     use std::collections::HashMap;
     use std::sync::Arc;
 
-    fn setup_test_env() {
-        unsafe {
-            std::env::set_var("JWT_SECRET", "test-secret-key-for-testing-only");
-        }
-    }
+    use crate::test_utils::{create_test_user, setup_test_env};
 
     #[tokio::test]
     async fn test_get_user_by_id_query_handler_success() {
         setup_test_env();
 
-        let password_hash = bcrypt::hash("password123", 4).unwrap(); // Use cost 4 for faster tests
-        let user = User {
-            id: "user1".to_string(),
-            email: "test@example.com".to_string(),
-            password_hash,
-            roles: vec![],
-            is_locked: false,
-            failed_login_attempts: 0,
-        };
+        let user = create_test_user();
 
-        let user_repo = Arc::new(InMemoryUserRepository::new(vec![user]));
+        let user_repo = Arc::new(InMemoryUserRepository::new(vec![user.clone()]));
         let role_repo = Arc::new(InMemoryRoleRepository::new());
         let permission_repo = Arc::new(InMemoryPermissionRepository::new());
 
         // Create role and assign to user
         let admin_role = role_repo.create_role("admin").await;
-        role_repo.assign_role("user1", &admin_role.id).await;
+        role_repo.assign_role(&user.id, &admin_role.id).await;
 
         let handler = GetUserByIdQueryHandler::new(user_repo, role_repo, permission_repo);
 
-        let query = QueryFactory::get_user_by_id(
-            "user1".to_string(),
-            true,
-            false,
-        );
+        let query = QueryFactory::get_user_by_id(user.id.clone(), true, false);
 
         let result = handler.handle(query).await;
         assert!(result.is_ok());
         let user_read_model = result.unwrap();
         assert!(user_read_model.is_some());
         let user_read_model = user_read_model.unwrap();
-        assert_eq!(user_read_model.id, "user1");
+        assert_eq!(user_read_model.id, user.id);
         assert_eq!(user_read_model.email, "test@example.com");
         assert_eq!(user_read_model.roles.len(), 1);
     }
@@ -981,11 +964,7 @@ mod tests {
 
         let handler = GetUserByIdQueryHandler::new(user_repo, role_repo, permission_repo);
 
-        let query = QueryFactory::get_user_by_id(
-            "nonexistent".to_string(),
-            false,
-            false,
-        );
+        let query = QueryFactory::get_user_by_id("nonexistent".to_string(), false, false);
 
         let result = handler.handle(query).await;
         assert!(result.is_ok());
@@ -1006,10 +985,7 @@ mod tests {
 
         let handler = GetRolesForUserQueryHandler::new(role_repo);
 
-        let query = QueryFactory::get_roles_for_user(
-            "user1".to_string(),
-            false,
-        );
+        let query = QueryFactory::get_roles_for_user("user1".to_string(), false);
 
         let result = handler.handle(query).await;
         assert!(result.is_ok());
@@ -1027,11 +1003,8 @@ mod tests {
 
         let handler = CheckUserPermissionQueryHandler::new(role_repo, permission_repo, abac_repo);
 
-        let query = QueryFactory::check_user_permission(
-            "user1".to_string(),
-            "read".to_string(),
-            None,
-        );
+        let query =
+            QueryFactory::check_user_permission("user1".to_string(), "read".to_string(), None);
 
         let result = handler.handle(query).await;
         assert!(result.is_ok());
@@ -1049,11 +1022,7 @@ mod tests {
 
         let handler = CheckPermissionQueryHandler::new(role_repo, permission_repo, abac_repo);
 
-        let query = QueryFactory::check_permission(
-            "user1".to_string(),
-            "read".to_string(),
-            None,
-        );
+        let query = QueryFactory::check_permission("user1".to_string(), "read".to_string(), None);
 
         let result = handler.handle(query).await;
         assert!(result.is_ok());
@@ -1070,15 +1039,7 @@ mod tests {
 
         let handler = ListUsersQueryHandler::new(user_repo, role_repo);
 
-        let query = QueryFactory::list_users(
-            1,
-            10,
-            None,
-            None,
-            None,
-            None,
-            None,
-        );
+        let query = QueryFactory::list_users(1, 10, None, None, None, None, None);
 
         let result = handler.handle(query).await;
         assert!(result.is_ok());
@@ -1100,14 +1061,7 @@ mod tests {
 
         let handler = ListRolesQueryHandler::new(role_repo, permission_repo);
 
-        let query = QueryFactory::list_roles(
-            1,
-            10,
-            None,
-            false,
-            None,
-            None,
-        );
+        let query = QueryFactory::list_roles(1, 10, None, false, None, None);
 
         let result = handler.handle(query).await;
         assert!(result.is_ok());
@@ -1125,14 +1079,7 @@ mod tests {
 
         let handler = ListPermissionsQueryHandler::new(permission_repo, permission_group_repo);
 
-        let query = QueryFactory::list_permissions(
-            1,
-            10,
-            None,
-            None,
-            None,
-            None,
-        );
+        let query = QueryFactory::list_permissions(1, 10, None, None, None, None);
 
         let result = handler.handle(query).await;
         assert!(result.is_ok());
@@ -1151,11 +1098,7 @@ mod tests {
 
         let handler = GetPermissionsForUserQueryHandler::new(role_repo, permission_repo, abac_repo);
 
-        let query = QueryFactory::get_permissions_for_user(
-            "user1".to_string(),
-            false,
-            false,
-        );
+        let query = QueryFactory::get_permissions_for_user("user1".to_string(), false, false);
 
         let result = handler.handle(query).await;
         assert!(result.is_ok());
@@ -1169,14 +1112,8 @@ mod tests {
 
         let handler = GetUserAuditEventsQueryHandler::new();
 
-        let query = QueryFactory::get_user_audit_events(
-            "user1".to_string(),
-            1,
-            10,
-            None,
-            None,
-            None,
-        );
+        let query =
+            QueryFactory::get_user_audit_events("user1".to_string(), 1, 10, None, None, None);
 
         let result = handler.handle(query).await;
         assert!(result.is_ok());
@@ -1193,15 +1130,7 @@ mod tests {
 
         let handler = ListAbacPoliciesQueryHandler::new(abac_policy_repo);
 
-        let query = QueryFactory::list_abac_policies(
-            1,
-            10,
-            None,
-            None,
-            false,
-            None,
-            None,
-        );
+        let query = QueryFactory::list_abac_policies(1, 10, None, None, false, None, None);
 
         let result = handler.handle(query).await;
         assert!(result.is_ok());
@@ -1218,15 +1147,7 @@ mod tests {
 
         let handler = ListPermissionGroupsQueryHandler::new(permission_group_repo);
 
-        let query = QueryFactory::list_permission_groups(
-            1,
-            10,
-            None,
-            None,
-            false,
-            None,
-            None,
-        );
+        let query = QueryFactory::list_permission_groups(1, 10, None, None, false, None, None);
 
         let result = handler.handle(query).await;
         assert!(result.is_ok());
@@ -1243,10 +1164,7 @@ mod tests {
 
         let handler = GetPermissionGroupQueryHandler::new(permission_group_repo);
 
-        let query = QueryFactory::get_permission_group(
-            "group1".to_string(),
-            false,
-        );
+        let query = QueryFactory::get_permission_group("group1".to_string(), false);
 
         let result = handler.handle(query).await;
         assert!(result.is_ok());
@@ -1262,9 +1180,7 @@ mod tests {
 
         let handler = GetRoleHierarchyQueryHandler::new(role_repo);
 
-        let query = QueryFactory::get_role_hierarchy(
-            admin_role.id.clone(),
-        );
+        let query = QueryFactory::get_role_hierarchy(admin_role.id.clone());
 
         let result = handler.handle(query).await;
         assert!(result.is_ok());
@@ -1281,9 +1197,7 @@ mod tests {
 
         let handler = GetRoleHierarchyQueryHandler::new(role_repo);
 
-        let query = QueryFactory::get_role_hierarchy(
-            "nonexistent".to_string(),
-        );
+        let query = QueryFactory::get_role_hierarchy("nonexistent".to_string());
 
         let result = handler.handle(query).await;
         assert!(result.is_err());
@@ -1316,11 +1230,7 @@ mod tests {
 
         let handler = GetPermissionsInGroupQueryHandler::new(permission_group_repo);
 
-        let query = QueryFactory::get_permissions_in_group(
-            "group1".to_string(),
-            1,
-            10,
-        );
+        let query = QueryFactory::get_permissions_in_group("group1".to_string(), 1, 10);
 
         let result = handler.handle(query).await;
         assert!(result.is_ok());
@@ -1336,9 +1246,7 @@ mod tests {
 
         let handler = GetRolePermissionsQueryHandler::new(permission_repo);
 
-        let query = QueryFactory::get_role_permissions(
-            "role1".to_string(),
-        );
+        let query = QueryFactory::get_role_permissions("role1".to_string());
 
         let result = handler.handle(query).await;
         assert!(result.is_ok());
@@ -1358,10 +1266,7 @@ mod tests {
 
         let handler = GetRoleByIdQueryHandler::new(role_repo, permission_repo);
 
-        let query = QueryFactory::get_role_by_id(
-            admin_role.id.clone(),
-            false,
-        );
+        let query = QueryFactory::get_role_by_id(admin_role.id.clone(), false);
 
         let result = handler.handle(query).await;
         assert!(result.is_ok());
@@ -1381,10 +1286,7 @@ mod tests {
 
         let handler = GetRoleByIdQueryHandler::new(role_repo, permission_repo);
 
-        let query = QueryFactory::get_role_by_id(
-            "nonexistent".to_string(),
-            false,
-        );
+        let query = QueryFactory::get_role_by_id("nonexistent".to_string(), false);
 
         let result = handler.handle(query).await;
         assert!(result.is_err());
@@ -1399,9 +1301,7 @@ mod tests {
 
         let handler = GetPermissionByIdQueryHandler::new(permission_repo);
 
-        let query = QueryFactory::get_permission_by_id(
-            "perm1".to_string(),
-        );
+        let query = QueryFactory::get_permission_by_id("perm1".to_string());
 
         let result = handler.handle(query).await;
         assert!(result.is_ok());
@@ -1419,8 +1319,14 @@ mod tests {
         let handler = CheckUserPermissionQueryHandler::new(role_repo, permission_repo, abac_repo);
 
         let mut context = HashMap::new();
-        context.insert("resource_type".to_string(), serde_json::Value::String("document".to_string()));
-        context.insert("user_department".to_string(), serde_json::Value::String("engineering".to_string()));
+        context.insert(
+            "resource_type".to_string(),
+            serde_json::Value::String("document".to_string()),
+        );
+        context.insert(
+            "user_department".to_string(),
+            serde_json::Value::String("engineering".to_string()),
+        );
 
         let query = QueryFactory::check_user_permission(
             "user1".to_string(),

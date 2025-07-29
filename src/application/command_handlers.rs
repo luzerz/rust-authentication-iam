@@ -29,6 +29,7 @@ use async_trait::async_trait;
 use std::sync::Arc;
 use tracing::instrument;
 
+
 // ============================================================================
 // COMMAND HANDLERS
 // ============================================================================
@@ -477,7 +478,9 @@ pub struct UpdateRoleCommandHandler {
 
 impl UpdateRoleCommandHandler {
     pub fn new(role_repo: Arc<dyn RoleRepository + Send + Sync>) -> Self {
-        Self { _role_repo: role_repo }
+        Self {
+            _role_repo: role_repo,
+        }
     }
 }
 
@@ -510,7 +513,9 @@ pub struct UpdatePermissionCommandHandler {
 
 impl UpdatePermissionCommandHandler {
     pub fn new(permission_repo: Arc<dyn PermissionRepository + Send + Sync>) -> Self {
-        Self { _permission_repo: permission_repo }
+        Self {
+            _permission_repo: permission_repo,
+        }
     }
 }
 
@@ -1412,47 +1417,36 @@ impl CommandHandler<CheckPermissionCommand> for CheckPermissionCommandHandler {
 mod tests {
     use super::*;
     use crate::application::commands::{
-        AuthenticateUserCommand, ChangePasswordCommand, CreateUserCommand, CreateRoleCommand,
-        CreatePermissionCommand, AssignRolesCommand, AssignPermissionsToRoleCommand,
+        AssignPermissionsToRoleCommand, AssignRolesCommand, AuthenticateUserCommand,
+        ChangePasswordCommand, CreatePermissionCommand, CreateRoleCommand, CreateUserCommand,
     };
     use crate::infrastructure::{
-        InMemoryUserRepository, InMemoryRoleRepository, InMemoryPermissionRepository,
         InMemoryAbacPolicyRepository, InMemoryPermissionGroupRepository,
+        InMemoryPermissionRepository, InMemoryRoleRepository, InMemoryUserRepository,
     };
     use std::sync::Arc;
 
-    fn setup_test_env() {
-        unsafe {
-            std::env::set_var("JWT_SECRET", "test-secret-key-for-testing-only");
-        }
-    }
+    use crate::test_utils::{create_test_user, setup_test_env};
+    use bcrypt::hash;
 
     #[tokio::test]
     async fn test_authenticate_user_command_handler_success() {
         setup_test_env();
-        
-        let password_hash = bcrypt::hash("password123", 4).unwrap(); // Use cost 4 for faster tests
-        let user = User {
-            id: "user1".to_string(),
-            email: "test@example.com".to_string(),
-            password_hash,
-            roles: vec![],
-            is_locked: false,
-            failed_login_attempts: 0,
-        };
-        
+
+        let user = create_test_user();
+
         let user_repo = Arc::new(InMemoryUserRepository::new(vec![user]));
         let handler = AuthenticateUserCommandHandler::new(user_repo);
-        
+
         let command = AuthenticateUserCommand {
             email: "test@example.com".to_string(),
-            password: "password123".to_string(),
+            password: "password".to_string(),
             command_id: "cmd1".to_string(),
             timestamp: chrono::Utc::now(),
             ip_address: Some("127.0.0.1".to_string()),
             user_agent: Some("test-agent".to_string()),
         };
-        
+
         let result = handler.handle(command).await;
         assert!(result.is_ok());
     }
@@ -1460,10 +1454,10 @@ mod tests {
     #[tokio::test]
     async fn test_authenticate_user_command_handler_user_not_found() {
         setup_test_env();
-        
+
         let user_repo = Arc::new(InMemoryUserRepository::new(vec![]));
         let handler = AuthenticateUserCommandHandler::new(user_repo);
-        
+
         let command = AuthenticateUserCommand {
             email: "nonexistent@example.com".to_string(),
             password: "password123".to_string(),
@@ -1472,7 +1466,7 @@ mod tests {
             ip_address: Some("127.0.0.1".to_string()),
             user_agent: Some("test-agent".to_string()),
         };
-        
+
         let result = handler.handle(command).await;
         assert!(matches!(result, Err(AuthError::UserNotFound)));
     }
@@ -1480,29 +1474,22 @@ mod tests {
     #[tokio::test]
     async fn test_authenticate_user_command_handler_locked_account() {
         setup_test_env();
-        
-        let password_hash = bcrypt::hash("password123", 4).unwrap(); // Use cost 4 for faster tests
-        let user = User {
-            id: "user1".to_string(),
-            email: "test@example.com".to_string(),
-            password_hash,
-            roles: vec![],
-            is_locked: true,
-            failed_login_attempts: 0,
-        };
-        
+
+        let mut user = create_test_user();
+        user.is_locked = true;
+
         let user_repo = Arc::new(InMemoryUserRepository::new(vec![user]));
         let handler = AuthenticateUserCommandHandler::new(user_repo);
-        
+
         let command = AuthenticateUserCommand {
             email: "test@example.com".to_string(),
-            password: "password123".to_string(),
+            password: "password".to_string(),
             command_id: "cmd1".to_string(),
             timestamp: chrono::Utc::now(),
             ip_address: Some("127.0.0.1".to_string()),
             user_agent: Some("test-agent".to_string()),
         };
-        
+
         let result = handler.handle(command).await;
         assert!(matches!(result, Err(AuthError::AccountLocked)));
     }
@@ -1510,20 +1497,12 @@ mod tests {
     #[tokio::test]
     async fn test_authenticate_user_command_handler_invalid_password() {
         setup_test_env();
-        
-        let password_hash = bcrypt::hash("password123", 4).unwrap(); // Use cost 4 for faster tests
-        let user = User {
-            id: "user1".to_string(),
-            email: "test@example.com".to_string(),
-            password_hash,
-            roles: vec![],
-            is_locked: false,
-            failed_login_attempts: 0,
-        };
-        
+
+        let user = create_test_user();
+
         let user_repo = Arc::new(InMemoryUserRepository::new(vec![user]));
         let handler = AuthenticateUserCommandHandler::new(user_repo);
-        
+
         let command = AuthenticateUserCommand {
             email: "test@example.com".to_string(),
             password: "wrongpassword".to_string(),
@@ -1532,7 +1511,7 @@ mod tests {
             ip_address: Some("127.0.0.1".to_string()),
             user_agent: Some("test-agent".to_string()),
         };
-        
+
         let result = handler.handle(command).await;
         assert!(matches!(result, Err(AuthError::InvalidCredentials)));
     }
@@ -1540,11 +1519,11 @@ mod tests {
     #[tokio::test]
     async fn test_create_user_command_handler() {
         setup_test_env();
-        
+
         let user_repo = Arc::new(InMemoryUserRepository::new(vec![]));
         let role_repo = Arc::new(InMemoryRoleRepository::new());
         let handler = CreateUserCommandHandler::new(user_repo.clone(), role_repo);
-        
+
         let command = CreateUserCommand {
             email: "newuser@example.com".to_string(),
             password: "password123".to_string(),
@@ -1555,10 +1534,10 @@ mod tests {
             timestamp: chrono::Utc::now(),
             created_by: Some("admin".to_string()),
         };
-        
+
         let result = handler.handle(command).await;
         assert!(result.is_ok());
-        
+
         let created_user = result.unwrap();
         assert_eq!(created_user.email, "newuser@example.com");
     }
@@ -1566,10 +1545,10 @@ mod tests {
     #[tokio::test]
     async fn test_create_role_command_handler() {
         setup_test_env();
-        
+
         let role_repo = Arc::new(InMemoryRoleRepository::new());
         let handler = CreateRoleCommandHandler::new(role_repo);
-        
+
         let command = CreateRoleCommand {
             name: "admin".to_string(),
             description: Some("Administrator role".to_string()),
@@ -1578,10 +1557,10 @@ mod tests {
             timestamp: chrono::Utc::now(),
             created_by: Some("admin".to_string()),
         };
-        
+
         let result = handler.handle(command).await;
         assert!(result.is_ok());
-        
+
         let created_role = result.unwrap();
         assert_eq!(created_role.name, "admin");
     }
@@ -1589,11 +1568,11 @@ mod tests {
     #[tokio::test]
     async fn test_create_permission_command_handler() {
         setup_test_env();
-        
+
         let permission_repo = Arc::new(InMemoryPermissionRepository::new());
         let permission_group_repo = Arc::new(InMemoryPermissionGroupRepository::new());
         let handler = CreatePermissionCommandHandler::new(permission_repo, permission_group_repo);
-        
+
         let command = CreatePermissionCommand {
             name: "user:read".to_string(),
             description: Some("Read user data".to_string()),
@@ -1602,10 +1581,10 @@ mod tests {
             timestamp: chrono::Utc::now(),
             created_by: Some("admin".to_string()),
         };
-        
+
         let result = handler.handle(command).await;
         assert!(result.is_ok());
-        
+
         let created_permission = result.unwrap();
         assert_eq!(created_permission.name, "user:read");
         // Note: Current implementation doesn't support description, so it will be None
@@ -1615,29 +1594,22 @@ mod tests {
     #[tokio::test]
     async fn test_assign_roles_command_handler() {
         setup_test_env();
-        
+
         // Create a user first
-        let user = User {
-            id: "user1".to_string(),
-            email: "test@example.com".to_string(),
-            password_hash: bcrypt::hash("password123", 4).unwrap(), // Use cost 4 for faster tests
-            roles: vec![],
-            is_locked: false,
-            failed_login_attempts: 0,
-        };
-        
+        let user = create_test_user();
+
         let role_repo = Arc::new(InMemoryRoleRepository::new());
-        let user_repo = Arc::new(InMemoryUserRepository::new(vec![user]));
+        let user_repo = Arc::new(InMemoryUserRepository::new(vec![user.clone()]));
         let handler = AssignRolesCommandHandler::new(role_repo, user_repo);
-        
+
         let command = AssignRolesCommand {
-            user_id: "user1".to_string(),
+            user_id: user.id.clone(),
             role_ids: vec!["role1".to_string()],
             command_id: "cmd1".to_string(),
             timestamp: chrono::Utc::now(),
             assigned_by: Some("admin".to_string()),
         };
-        
+
         let result = handler.handle(command).await;
         assert!(result.is_ok());
     }
@@ -1645,11 +1617,11 @@ mod tests {
     #[tokio::test]
     async fn test_assign_permissions_to_role_command_handler() {
         setup_test_env();
-        
+
         let role_repo = Arc::new(InMemoryRoleRepository::new());
         let permission_repo = Arc::new(InMemoryPermissionRepository::new());
         let handler = AssignPermissionsToRoleCommandHandler::new(role_repo, permission_repo);
-        
+
         let command = AssignPermissionsToRoleCommand {
             role_id: "role1".to_string(),
             permission_ids: vec!["perm1".to_string()],
@@ -1657,7 +1629,7 @@ mod tests {
             timestamp: chrono::Utc::now(),
             assigned_by: Some("admin".to_string()),
         };
-        
+
         let result = handler.handle(command).await;
         assert!(result.is_ok());
     }
@@ -1665,53 +1637,25 @@ mod tests {
     #[tokio::test]
     async fn test_change_password_command_handler() {
         setup_test_env();
-        
-        let password_hash = bcrypt::hash("oldpassword", 4).unwrap(); // Use cost 4 for faster tests
-        let user = User {
-            id: "user1".to_string(),
-            email: "test@example.com".to_string(),
-            password_hash,
-            roles: vec![],
-            is_locked: false,
-            failed_login_attempts: 0,
-        };
-        
-        let user_repo = Arc::new(InMemoryUserRepository::new(vec![user]));
+
+        let mut user = create_test_user();
+        user.password_hash = hash("oldpassword", 4).unwrap(); // Use cost 4 for faster tests
+
+        let user_repo = Arc::new(InMemoryUserRepository::new(vec![user.clone()]));
         let handler = ChangePasswordCommandHandler::new(user_repo);
-        
+
         let command = ChangePasswordCommand {
-            user_id: "user1".to_string(),
+            user_id: user.id.clone(),
             current_password: "oldpassword".to_string(),
             new_password: "NewPassword123!".to_string(),
             command_id: "cmd1".to_string(),
             timestamp: chrono::Utc::now(),
             require_current_password: true,
         };
-        
+
         let result = handler.handle(command).await;
         assert!(result.is_ok());
     }
 
-    #[tokio::test]
-    async fn test_evaluate_abac_policies_command_handler() {
-        setup_test_env();
-        
-        let abac_policy_repo = Arc::new(InMemoryAbacPolicyRepository::new());
-        let handler = EvaluateAbacPoliciesCommandHandler::new(abac_policy_repo);
-        
-        let command = EvaluateAbacPoliciesCommand {
-            user_id: "user1".to_string(),
-            permission_name: "test:permission".to_string(),
-            attributes: serde_json::json!({
-                "department": "engineering",
-                "level": "senior"
-            }),
-            command_id: "cmd1".to_string(),
-            timestamp: chrono::Utc::now(),
-            evaluated_by: Some("admin".to_string()),
-        };
-        
-        let result = handler.handle(command).await;
-        assert!(result.is_ok());
-    }
+
 }

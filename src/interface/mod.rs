@@ -9,7 +9,7 @@ pub struct LoginRequest {
     pub password: String,
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, Deserialize, ToSchema)]
 pub struct LoginResponse {
     pub access_token: String,
     pub refresh_token: String,
@@ -32,7 +32,7 @@ pub struct RefreshTokenRequest {
     pub refresh_token: String,
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, Deserialize, ToSchema)]
 pub struct RefreshTokenResponse {
     pub access_token: String,
     pub refresh_token: String,
@@ -43,7 +43,7 @@ pub struct LogoutRequest {
     pub refresh_token: String,
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, Deserialize, ToSchema)]
 pub struct LogoutResponse {
     pub success: bool,
 }
@@ -66,12 +66,12 @@ pub struct RoleResponse {
     pub parent_role_id: Option<String>,
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Deserialize, Serialize, ToSchema)]
 pub struct RolesListResponse {
     pub roles: Vec<RoleResponse>,
 }
 
-#[derive(Serialize, Deserialize, ToSchema)]
+#[derive(Deserialize, Serialize, ToSchema)]
 pub struct AssignRoleRequest {
     pub user_id: String,
     pub role_id: String,
@@ -83,19 +83,19 @@ pub struct RemoveRoleRequest {
     pub role_id: String,
 }
 
-#[derive(serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+#[derive(Deserialize, Serialize, ToSchema)]
 pub struct SetParentRoleRequest {
     pub role_id: String,
     pub parent_role_id: Option<String>, // None to remove parent
 }
 
-#[derive(serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+#[derive(Deserialize, Serialize, ToSchema)]
 pub struct CreateRoleHierarchyRequest {
     pub parent_role_id: String,
     pub child_role_id: String,
 }
 
-#[derive(Serialize, ToSchema, Debug)]
+#[derive(Deserialize, Serialize, ToSchema, Debug)]
 pub struct RoleHierarchyResponse {
     pub role_id: String,
     pub role_name: String,
@@ -104,63 +104,63 @@ pub struct RoleHierarchyResponse {
     pub inherited_roles: Vec<RoleResponse>,
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Deserialize, Serialize, ToSchema)]
 pub struct RoleHierarchyListResponse {
     pub hierarchies: Vec<RoleHierarchyResponse>,
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Deserialize, Serialize, ToSchema)]
 pub struct UserRolesResponse {
     pub user_id: String,
     pub roles: Vec<RoleResponse>,
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Deserialize, Serialize, ToSchema)]
 pub struct EffectivePermissionsResponse {
     pub user_id: String,
     pub permissions: Vec<PermissionResponse>,
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Deserialize, Serialize, ToSchema)]
 pub struct RolePermissionsResponse {
     pub role_id: String,
     pub permissions: Vec<PermissionResponse>,
 }
 
-#[derive(Serialize, Deserialize, ToSchema)]
+#[derive(Deserialize, Serialize, ToSchema)]
 pub struct CreatePermissionRequest {
     pub name: String,
 }
 
-#[derive(Serialize, Deserialize, ToSchema)]
+#[derive(Deserialize, Serialize, ToSchema)]
 pub struct UpdatePermissionRequest {
     pub name: String,
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Deserialize, Serialize, ToSchema)]
 pub struct PermissionResponse {
     pub id: String,
     pub name: String,
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Deserialize, Serialize, ToSchema)]
 pub struct PermissionsListResponse {
     pub permissions: Vec<PermissionResponse>,
 }
 
-#[derive(Serialize, Deserialize, ToSchema)]
+#[derive(Deserialize, Serialize, ToSchema)]
 pub struct AssignPermissionRequest {
     pub role_id: String,
     pub permission_id: String,
 }
 
-#[derive(Serialize, Deserialize, ToSchema)]
+#[derive(Deserialize, Serialize, ToSchema)]
 pub struct RemovePermissionRequest {
     pub role_id: String,
     pub permission_id: String,
 }
 
-#[derive(serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+#[derive(Deserialize, Serialize, ToSchema)]
 pub struct AbacPolicyRequest {
     pub name: String,
     pub effect: String, // "Allow" or "Deny"
@@ -169,7 +169,7 @@ pub struct AbacPolicyRequest {
     pub conflict_resolution: Option<String>, // "deny_overrides", "allow_overrides", "priority_wins", "first_match"
 }
 
-#[derive(serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+#[derive(Deserialize, Serialize, ToSchema)]
 pub struct UpdateAbacPolicyRequest {
     pub name: Option<String>,
     pub effect: Option<String>, // "Allow" or "Deny"
@@ -178,14 +178,14 @@ pub struct UpdateAbacPolicyRequest {
     pub conflict_resolution: Option<String>, // "deny_overrides", "allow_overrides", "priority_wins", "first_match"
 }
 
-#[derive(Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+#[derive(Clone, Deserialize, Serialize, ToSchema)]
 pub struct AbacConditionDto {
     pub attribute: String,
     pub operator: String,
     pub value: String,
 }
 
-#[derive(serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+#[derive(Deserialize, Serialize, ToSchema)]
 pub struct AbacPolicyResponse {
     pub id: String,
     pub name: String,
@@ -195,26 +195,26 @@ pub struct AbacPolicyResponse {
     pub conflict_resolution: String,
 }
 
-#[derive(serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+#[derive(Deserialize, Serialize, ToSchema)]
 pub struct AbacPolicyListResponse {
     pub policies: Vec<AbacPolicyResponse>,
 }
 
-#[derive(serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+#[derive(Deserialize, Serialize, ToSchema)]
 pub struct AssignAbacPolicyRequest {
     pub target_type: String, // "user" or "role"
     pub target_id: String,
     pub policy_id: String,
 }
 
-#[derive(serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+#[derive(Deserialize, Serialize, ToSchema)]
 pub struct AbacEvaluationRequest {
     pub user_id: String,
     pub permission_name: String,
     pub attributes: std::collections::HashMap<String, String>,
 }
 
-#[derive(serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+#[derive(Deserialize, Serialize, ToSchema)]
 pub struct AbacEvaluationResponse {
     pub user_id: String,
     pub permission_name: String,
@@ -223,7 +223,7 @@ pub struct AbacEvaluationResponse {
     pub reason: String,
 }
 
-#[derive(Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+#[derive(Clone, Deserialize, Serialize, ToSchema)]
 pub struct AbacPolicyEvaluationResult {
     pub policy_id: String,
     pub policy_name: String,
@@ -236,49 +236,49 @@ pub struct AbacPolicyEvaluationResult {
     pub applied: bool, // Whether this policy was actually applied in the final decision
 }
 
-#[derive(Serialize, Deserialize, ToSchema)]
+#[derive(Deserialize, Serialize, ToSchema)]
 pub struct UserRegistrationRequest {
     pub email: String,
     pub password: String,
     pub name: Option<String>,
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Deserialize, Serialize, ToSchema)]
 pub struct UserRegistrationResponse {
     pub user_id: String,
     pub email: String,
     pub message: String,
 }
 
-#[derive(Serialize, Deserialize, ToSchema)]
+#[derive(Deserialize, Serialize, ToSchema)]
 pub struct PasswordChangeRequest {
     pub current_password: String,
     pub new_password: String,
 }
 
-#[derive(Serialize, Deserialize, ToSchema)]
+#[derive(Deserialize, Serialize, ToSchema)]
 pub struct PasswordResetRequest {
     pub email: String,
 }
 
-#[derive(Serialize, Deserialize, ToSchema)]
+#[derive(Deserialize, Serialize, ToSchema)]
 pub struct PasswordResetConfirmRequest {
     pub reset_token: String,
     pub new_password: String,
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Deserialize, Serialize, ToSchema)]
 pub struct PasswordResetResponse {
     pub message: String,
 }
 
-#[derive(serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+#[derive(Deserialize, Serialize, ToSchema)]
 pub struct ErrorResponse {
     pub error: String,
 }
 
 // Permission group DTOs
-#[derive(serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+#[derive(Deserialize, Serialize, ToSchema)]
 pub struct CreatePermissionGroupRequest {
     pub name: String,
     pub description: Option<String>,
@@ -286,7 +286,7 @@ pub struct CreatePermissionGroupRequest {
     pub metadata: Option<serde_json::Value>,
 }
 
-#[derive(serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+#[derive(Deserialize, Serialize, ToSchema)]
 pub struct UpdatePermissionGroupRequest {
     pub name: Option<String>,
     pub description: Option<String>,
@@ -295,7 +295,7 @@ pub struct UpdatePermissionGroupRequest {
     pub is_active: Option<bool>,
 }
 
-#[derive(serde::Serialize, utoipa::ToSchema)]
+#[derive(Deserialize, Serialize, ToSchema)]
 pub struct PermissionGroupResponse {
     pub id: String,
     pub name: String,
@@ -306,7 +306,7 @@ pub struct PermissionGroupResponse {
     pub permission_count: usize,
 }
 
-#[derive(serde::Serialize, utoipa::ToSchema)]
+#[derive(Deserialize, Serialize, ToSchema)]
 pub struct PermissionGroupListResponse {
     pub groups: Vec<PermissionGroupResponse>,
     pub total: usize,
